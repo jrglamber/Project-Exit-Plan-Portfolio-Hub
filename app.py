@@ -13,7 +13,7 @@ from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 
 APP_NAME = "Project Exit Plan — Portfolio Hub"
-APP_VERSION = "0.2.1"
+APP_VERSION = "0.2.2"
 SCHEMA_VERSION = 1
 
 POLL_SECONDS = max(5, min(int(float(os.getenv("AGGREGATE_POLL_SECONDS", "20"))), 300))
@@ -38,6 +38,17 @@ LIVE_PORTFOLIO_STRATEGIES = tuple(
     x.strip().lower()
     for x in os.getenv("AGGREGATE_LIVE_STRATEGIES", "indices,metals").split(",")
     if x.strip().lower() in SOURCES
+)
+
+# Indices and Metals read the same broker account independently, so their NAV
+# snapshots can differ slightly simply because they were sampled seconds apart.
+# Only flag a genuine mismatch when the spread is materially larger than normal
+# live-market drift.
+NAV_MISMATCH_ABS_GBP = max(
+    0.01, float(os.getenv("PORTFOLIO_NAV_MISMATCH_ABS_GBP", "10"))
+)
+NAV_MISMATCH_PCT = max(
+    0.0, float(os.getenv("PORTFOLIO_NAV_MISMATCH_PCT", "0.0025"))
 )
 
 app = FastAPI(title=APP_NAME, version=APP_VERSION)
@@ -243,10 +254,42 @@ def aggregate_snapshot() -> Dict[str, Any]:
         live_rows.append((key, data, view))
 
     live_values = [row[1] for row in live_rows]
-    nav_values = [d.get("nav_gbp") for d in live_values if d.get("nav_gbp") is not None]
-    nav = nav_values[0] if nav_values else None
+
+    # NAV is a shared broker-account value, not a strategy value. Use the most
+    # recently sampled live source rather than whichever strategy happens to be
+    # first in the configured list.
+    nav_candidates = []
+    for key, data, view in live_rows:
+        nav_value = data.get("nav_gbp")
+        if nav_value is None:
+            continue
+        updated_raw = data.get("updated_at_utc") or ""
+        try:
+            updated_dt = datetime.fromisoformat(str(updated_raw).replace("Z", "+00:00"))
+            if updated_dt.tzinfo is None:
+                updated_dt = updated_dt.replace(tzinfo=timezone.utc)
+            updated_ts = updated_dt.timestamp()
+        except Exception:
+            updated_ts = 0.0
+        nav_candidates.append((updated_ts, key, float(nav_value)))
+
+    nav_candidates.sort(reverse=True)
+    nav = nav_candidates[0][2] if nav_candidates else None
+    nav_source = nav_candidates[0][1] if nav_candidates else None
+    nav_values = [row[2] for row in nav_candidates]
+
+    nav_spread_gbp = (
+        max(nav_values) - min(nav_values) if len(nav_values) > 1 else 0.0
+    )
+    nav_reference = (
+        sum(nav_values) / len(nav_values) if nav_values else 0.0
+    )
+    nav_tolerance_gbp = max(
+        NAV_MISMATCH_ABS_GBP,
+        abs(nav_reference) * NAV_MISMATCH_PCT,
+    )
     nav_disagreement = bool(
-        len(nav_values) > 1 and (max(nav_values) - min(nav_values)) > 0.01
+        len(nav_values) > 1 and nav_spread_gbp > nav_tolerance_gbp
     )
 
     pnl_values = [
@@ -284,6 +327,9 @@ def aggregate_snapshot() -> Dict[str, Any]:
             "complete": len(portfolio_warnings) == 0,
             "warnings": portfolio_warnings,
             "nav_gbp": nav,
+            "nav_source": nav_source,
+            "nav_spread_gbp": nav_spread_gbp,
+            "nav_tolerance_gbp": nav_tolerance_gbp,
             "nav_disagreement": nav_disagreement,
             "unrealised_pnl_gbp": total_unrealised,
             "realised_month_gbp": mtd,
@@ -367,6 +413,6 @@ function when(v){if(!v)return '—';try{return new Date(v).toLocaleString('en-GB
 function stateBadge(s){if(!s.configured)return '<span class="badge red">NOT CONFIGURED</span>';if(!s.data)return '<span class="badge red">UNAVAILABLE</span>';if(s.build_match===false)return '<span class="badge red">BUILD MISMATCH</span>';if(s.stale)return '<span class="badge amber">STALE</span>';if(s.ok)return '<span class="badge green">FRESH DATA</span>';return '<span class="badge amber">LAST GOOD</span>'}
 function strategyHtml(key,s){const d=s.data||{},b=d.basket||{},mode=(d.mode||'unknown').toUpperCase(),status=(d.status||'UNKNOWN').toUpperCase(),dir=(b.direction||'').toUpperCase();const hw=[rr(b.high_water_r),when(b.high_water_at_utc)].filter(x=>x&&x!=='—').join(' · ');return `<div class="strategy"><div class="strategy-head"><div class="strategy-title">${NAMES[key]}</div><div class="badges"><span class="badge">${mode}</span><span class="badge">${d.source_build||'BUILD ?'}</span><span class="badge">${status}${dir?' · '+dir:''}</span>${stateBadge(s)}</div></div><div class="cards"><div class="card"><div class="label">Broker P&amp;L</div><div class="value ${cls(b.pnl_gbp)}">${money(b.pnl_gbp)}</div><div class="small">${rr(b.pnl_r)}</div></div><div class="card"><div class="label">High Water</div><div class="value">${money(b.high_water_gbp)}</div><div class="small">${hw||'—'}</div></div><div class="card"><div class="label">Giveback</div><div class="value">${money(b.giveback_gbp)}</div><div class="small">${rr(b.giveback_r)}</div></div><div class="card"><div class="label">Open Trades</div><div class="value">${intval(b.open_trades)}</div><div class="small">Updated ${when(d.updated_at_utc)}</div></div></div></div>`}
 function card(label,val,sub=''){return `<div class="card"><div class="label">${label}</div><div class="value">${val}</div><div class="small">${sub}</div></div>`}
-async function load(){try{const res=await fetch('/api/aggregate',{cache:'no-store'});const x=await res.json();document.getElementById('strategies').innerHTML=ORDER.map(k=>strategyHtml(k,x.sources[k]||{})).join('');const p=x.portfolio||{};const scope=(p.scope||[]).map(k=>NAMES[k]||k).join(' + ');const warns=p.warnings||[];document.getElementById('portfolioNote').innerHTML=p.complete?`<span class="green"><strong>LIVE scope: ${scope||'none'} · complete</strong></span>`:`<span class="amber"><strong>LIVE scope: ${scope||'none'} · ${warns.join(' · ')||'partial'}</strong></span>`;document.getElementById('portfolio').innerHTML=[card('Portfolio NAV',money(p.nav_gbp),p.nav_disagreement?'LIVE NAV mismatch — review':'Shared live broker NAV; not summed'),card('Unrealised P&L',money(p.unrealised_pnl_gbp),'LIVE strategies only'),card('MTD Realised',money(p.realised_month_gbp),'LIVE strategies only'),card('Open Risk',money(p.open_risk_estimate_gbp),'LIVE open trades × approved risk'),card('Drawdown',money(p.drawdown_gbp),'Stage 2')].join('');document.getElementById('accounting').innerHTML=ORDER.map(k=>{const s=x.sources[k]||{},a=(s.data||{}).accounting||{};return `<strong>${NAMES[k]}</strong> — Today ${money(a.realised_today_gbp)} · Week ${money(a.realised_week_gbp)} · Month ${money(a.realised_month_gbp)} · All time ${money(a.realised_all_time_gbp)}`}).join('<br>');document.getElementById('exposure').innerHTML=ORDER.map(k=>{const d=(x.sources[k]||{}).data||{},b=d.basket||{};return `<strong>${NAMES[k]}</strong> — ${intval(b.open_trades)} open · risk/trade ${money(d.risk_per_trade_gbp)} · basket ${money(b.pnl_gbp)}`}).join('<br>');document.getElementById('health').innerHTML=ORDER.map(k=>{const s=x.sources[k]||{},err=s.error?` · ${s.error}`:'';return `<strong>${NAMES[k]}</strong> — ${s.ok&&!s.stale&&s.build_match!==false?'OK':s.build_match===false?'BUILD MISMATCH':s.stale?'STALE':'DEGRADED'} · build ${s.reported_build||'—'} (expected ${s.expected_build||'—'}) · last good ${when(s.last_good_at_utc)}${err}`}).join('<br>');document.getElementById('topStatus').textContent='Last Portfolio Hub refresh '+when(x.generated_at_utc)+' · auto-refresh 20s'}catch(e){document.getElementById('topStatus').textContent='Portfolio Hub API unavailable: '+e}}
+async function load(){try{const res=await fetch('/api/aggregate',{cache:'no-store'});const x=await res.json();document.getElementById('strategies').innerHTML=ORDER.map(k=>strategyHtml(k,x.sources[k]||{})).join('');const p=x.portfolio||{};const scope=(p.scope||[]).map(k=>NAMES[k]||k).join(' + ');const warns=p.warnings||[];document.getElementById('portfolioNote').innerHTML=p.complete?`<span class="green"><strong>LIVE scope: ${scope||'none'} · complete</strong></span>`:`<span class="amber"><strong>LIVE scope: ${scope||'none'} · ${warns.join(' · ')||'partial'}</strong></span>`;document.getElementById('portfolio').innerHTML=[card('Portfolio NAV',money(p.nav_gbp),p.nav_disagreement?'LIVE NAV materially different — review':`Shared live broker NAV · freshest ${NAMES[p.nav_source]||p.nav_source||'source'}${num(p.nav_spread_gbp)!==null&&num(p.nav_spread_gbp)>0?' · source drift '+money(p.nav_spread_gbp):''}`),card('Unrealised P&L',money(p.unrealised_pnl_gbp),'LIVE strategies only'),card('MTD Realised',money(p.realised_month_gbp),'LIVE strategies only'),card('Open Risk',money(p.open_risk_estimate_gbp),'LIVE open trades × approved risk'),card('Drawdown',money(p.drawdown_gbp),'Stage 2')].join('');document.getElementById('accounting').innerHTML=ORDER.map(k=>{const s=x.sources[k]||{},a=(s.data||{}).accounting||{};return `<strong>${NAMES[k]}</strong> — Today ${money(a.realised_today_gbp)} · Week ${money(a.realised_week_gbp)} · Month ${money(a.realised_month_gbp)} · All time ${money(a.realised_all_time_gbp)}`}).join('<br>');document.getElementById('exposure').innerHTML=ORDER.map(k=>{const d=(x.sources[k]||{}).data||{},b=d.basket||{};return `<strong>${NAMES[k]}</strong> — ${intval(b.open_trades)} open · risk/trade ${money(d.risk_per_trade_gbp)} · basket ${money(b.pnl_gbp)}`}).join('<br>');document.getElementById('health').innerHTML=ORDER.map(k=>{const s=x.sources[k]||{},err=s.error?` · ${s.error}`:'';return `<strong>${NAMES[k]}</strong> — ${s.ok&&!s.stale&&s.build_match!==false?'OK':s.build_match===false?'BUILD MISMATCH':s.stale?'STALE':'DEGRADED'} · build ${s.reported_build||'—'} (expected ${s.expected_build||'—'}) · last good ${when(s.last_good_at_utc)}${err}`}).join('<br>');document.getElementById('topStatus').textContent='Last Portfolio Hub refresh '+when(x.generated_at_utc)+' · auto-refresh 20s'}catch(e){document.getElementById('topStatus').textContent='Portfolio Hub API unavailable: '+e}}
 load(); setInterval(load,20000);
 </script></body></html>'''
