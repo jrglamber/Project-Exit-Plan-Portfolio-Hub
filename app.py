@@ -12,8 +12,8 @@ from typing import Any, Dict, Optional
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 
-APP_NAME = "Project Exit Plan — Aggregate Dashboard"
-APP_VERSION = "0.2.0"
+APP_NAME = "Project Exit Plan — Portfolio Hub"
+APP_VERSION = "0.2.1"
 SCHEMA_VERSION = 1
 
 POLL_SECONDS = max(5, min(int(float(os.getenv("AGGREGATE_POLL_SECONDS", "20"))), 300))
@@ -331,7 +331,7 @@ def dashboard() -> str:
 <html>
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Project Exit Plan — Aggregate</title>
+<title>Project Exit Plan — Portfolio Hub</title>
 <style>
 :root{--bg:#0d1117;--panel:#161b22;--panel2:#11161d;--border:#30363d;--text:#f3f4f6;--muted:#9da7b3;--green:#54d98c;--amber:#f7c65d;--red:#ff7b72}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font-family:Arial,Helvetica,sans-serif;padding:14px}.page{max-width:1220px;margin:0 auto}
@@ -344,12 +344,12 @@ details{background:var(--panel);border:1px solid var(--border);border-radius:10p
 </style>
 </head>
 <body><div class="page">
-<h1>Project Exit Plan</h1>
-<div class="sub">Aggregate Dashboard · read-only · live-money portfolio totals exclude practice/demo strategies</div>
-<div id="topStatus" class="top-status">Loading live strategy snapshots…</div>
-<div id="strategies"></div>
+<h1>Project Exit Plan — Portfolio Hub</h1>
+<div class="sub">Live portfolio overview · read-only · practice/demo strategies remain visible but excluded from live-money totals</div>
 <div class="section-title">Live Portfolio</div><div id="portfolioNote" class="top-status">Waiting for live portfolio scope…</div>
 <div id="portfolio" class="portfolio"></div>
+<div id="topStatus" class="top-status">Loading live strategy snapshots…</div>
+<div id="strategies"></div>
 <details><summary>Accounting</summary><div class="body" id="accounting">Waiting for connected strategy accounting data.</div></details>
 <details><summary>Exposure</summary><div class="body" id="exposure">Waiting for connected strategy exposure data.</div></details>
 <details><summary>Recent Activity</summary><div class="body">Stage 2. This will aggregate closures, harvests, basket resets and material events after the top-tile contract is proven.</div></details>
@@ -367,6 +367,6 @@ function when(v){if(!v)return '—';try{return new Date(v).toLocaleString('en-GB
 function stateBadge(s){if(!s.configured)return '<span class="badge red">NOT CONFIGURED</span>';if(!s.data)return '<span class="badge red">UNAVAILABLE</span>';if(s.build_match===false)return '<span class="badge red">BUILD MISMATCH</span>';if(s.stale)return '<span class="badge amber">STALE</span>';if(s.ok)return '<span class="badge green">FRESH DATA</span>';return '<span class="badge amber">LAST GOOD</span>'}
 function strategyHtml(key,s){const d=s.data||{},b=d.basket||{},mode=(d.mode||'unknown').toUpperCase(),status=(d.status||'UNKNOWN').toUpperCase(),dir=(b.direction||'').toUpperCase();const hw=[rr(b.high_water_r),when(b.high_water_at_utc)].filter(x=>x&&x!=='—').join(' · ');return `<div class="strategy"><div class="strategy-head"><div class="strategy-title">${NAMES[key]}</div><div class="badges"><span class="badge">${mode}</span><span class="badge">${d.source_build||'BUILD ?'}</span><span class="badge">${status}${dir?' · '+dir:''}</span>${stateBadge(s)}</div></div><div class="cards"><div class="card"><div class="label">Broker P&amp;L</div><div class="value ${cls(b.pnl_gbp)}">${money(b.pnl_gbp)}</div><div class="small">${rr(b.pnl_r)}</div></div><div class="card"><div class="label">High Water</div><div class="value">${money(b.high_water_gbp)}</div><div class="small">${hw||'—'}</div></div><div class="card"><div class="label">Giveback</div><div class="value">${money(b.giveback_gbp)}</div><div class="small">${rr(b.giveback_r)}</div></div><div class="card"><div class="label">Open Trades</div><div class="value">${intval(b.open_trades)}</div><div class="small">Updated ${when(d.updated_at_utc)}</div></div></div></div>`}
 function card(label,val,sub=''){return `<div class="card"><div class="label">${label}</div><div class="value">${val}</div><div class="small">${sub}</div></div>`}
-async function load(){try{const res=await fetch('/api/aggregate',{cache:'no-store'});const x=await res.json();document.getElementById('strategies').innerHTML=ORDER.map(k=>strategyHtml(k,x.sources[k]||{})).join('');const p=x.portfolio||{};const scope=(p.scope||[]).map(k=>NAMES[k]||k).join(' + ');const warns=p.warnings||[];document.getElementById('portfolioNote').innerHTML=p.complete?`<span class="green"><strong>LIVE scope: ${scope||'none'} · complete</strong></span>`:`<span class="amber"><strong>LIVE scope: ${scope||'none'} · ${warns.join(' · ')||'partial'}</strong></span>`;document.getElementById('portfolio').innerHTML=[card('Portfolio NAV',money(p.nav_gbp),p.nav_disagreement?'LIVE NAV mismatch — review':'Shared live broker NAV; not summed'),card('Unrealised P&L',money(p.unrealised_pnl_gbp),'LIVE strategies only'),card('MTD Realised',money(p.realised_month_gbp),'LIVE strategies only'),card('Open Risk',money(p.open_risk_estimate_gbp),'LIVE open trades × approved risk'),card('Drawdown',money(p.drawdown_gbp),'Stage 2')].join('');document.getElementById('accounting').innerHTML=ORDER.map(k=>{const s=x.sources[k]||{},a=(s.data||{}).accounting||{};return `<strong>${NAMES[k]}</strong> — Today ${money(a.realised_today_gbp)} · Week ${money(a.realised_week_gbp)} · Month ${money(a.realised_month_gbp)} · All time ${money(a.realised_all_time_gbp)}`}).join('<br>');document.getElementById('exposure').innerHTML=ORDER.map(k=>{const d=(x.sources[k]||{}).data||{},b=d.basket||{};return `<strong>${NAMES[k]}</strong> — ${intval(b.open_trades)} open · risk/trade ${money(d.risk_per_trade_gbp)} · basket ${money(b.pnl_gbp)}`}).join('<br>');document.getElementById('health').innerHTML=ORDER.map(k=>{const s=x.sources[k]||{},err=s.error?` · ${s.error}`:'';return `<strong>${NAMES[k]}</strong> — ${s.ok&&!s.stale&&s.build_match!==false?'OK':s.build_match===false?'BUILD MISMATCH':s.stale?'STALE':'DEGRADED'} · build ${s.reported_build||'—'} (expected ${s.expected_build||'—'}) · last good ${when(s.last_good_at_utc)}${err}`}).join('<br>');document.getElementById('topStatus').textContent='Last aggregate refresh '+when(x.generated_at_utc)+' · auto-refresh 20s'}catch(e){document.getElementById('topStatus').textContent='Aggregate API unavailable: '+e}}
+async function load(){try{const res=await fetch('/api/aggregate',{cache:'no-store'});const x=await res.json();document.getElementById('strategies').innerHTML=ORDER.map(k=>strategyHtml(k,x.sources[k]||{})).join('');const p=x.portfolio||{};const scope=(p.scope||[]).map(k=>NAMES[k]||k).join(' + ');const warns=p.warnings||[];document.getElementById('portfolioNote').innerHTML=p.complete?`<span class="green"><strong>LIVE scope: ${scope||'none'} · complete</strong></span>`:`<span class="amber"><strong>LIVE scope: ${scope||'none'} · ${warns.join(' · ')||'partial'}</strong></span>`;document.getElementById('portfolio').innerHTML=[card('Portfolio NAV',money(p.nav_gbp),p.nav_disagreement?'LIVE NAV mismatch — review':'Shared live broker NAV; not summed'),card('Unrealised P&L',money(p.unrealised_pnl_gbp),'LIVE strategies only'),card('MTD Realised',money(p.realised_month_gbp),'LIVE strategies only'),card('Open Risk',money(p.open_risk_estimate_gbp),'LIVE open trades × approved risk'),card('Drawdown',money(p.drawdown_gbp),'Stage 2')].join('');document.getElementById('accounting').innerHTML=ORDER.map(k=>{const s=x.sources[k]||{},a=(s.data||{}).accounting||{};return `<strong>${NAMES[k]}</strong> — Today ${money(a.realised_today_gbp)} · Week ${money(a.realised_week_gbp)} · Month ${money(a.realised_month_gbp)} · All time ${money(a.realised_all_time_gbp)}`}).join('<br>');document.getElementById('exposure').innerHTML=ORDER.map(k=>{const d=(x.sources[k]||{}).data||{},b=d.basket||{};return `<strong>${NAMES[k]}</strong> — ${intval(b.open_trades)} open · risk/trade ${money(d.risk_per_trade_gbp)} · basket ${money(b.pnl_gbp)}`}).join('<br>');document.getElementById('health').innerHTML=ORDER.map(k=>{const s=x.sources[k]||{},err=s.error?` · ${s.error}`:'';return `<strong>${NAMES[k]}</strong> — ${s.ok&&!s.stale&&s.build_match!==false?'OK':s.build_match===false?'BUILD MISMATCH':s.stale?'STALE':'DEGRADED'} · build ${s.reported_build||'—'} (expected ${s.expected_build||'—'}) · last good ${when(s.last_good_at_utc)}${err}`}).join('<br>');document.getElementById('topStatus').textContent='Last Portfolio Hub refresh '+when(x.generated_at_utc)+' · auto-refresh 20s'}catch(e){document.getElementById('topStatus').textContent='Portfolio Hub API unavailable: '+e}}
 load(); setInterval(load,20000);
 </script></body></html>'''
