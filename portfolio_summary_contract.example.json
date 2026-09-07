@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "strategy": "metals",
+  "label": "Metals",
+  "mode": "live",
+  "status": "enabled",
+  "source_build": "v1.6.33",
+  "updated_at_utc": "2026-09-04T14:55:00+00:00",
+  "nav_gbp": 7000.0,
+  "risk_per_trade_gbp": 7.0,
+  "basket": {
+    "direction": "LONG",
+    "open_trades": 23,
+    "pnl_gbp": 104.25,
+    "pnl_r": 14.9,
+    "high_water_gbp": 126.4,
+    "high_water_r": 18.1,
+    "high_water_at_utc": "2026-09-04T14:42:17+00:00",
+    "giveback_gbp": 22.15,
+    "giveback_r": 3.2
+  },
+  "accounting": {
+    "realised_today_gbp": 0.0,
+    "realised_week_gbp": 42.5,
+    "realised_month_gbp": 42.5,
+    "realised_all_time_gbp": 153.2
+  },
+  "health": {
+    "broker_ok": true,
+    "database_ok": true,
+    "worker_ok": true,
+    "last_signal_at_utc": "2026-09-04T14:00:00+00:00",
+    "note": ""
+  }
+}
