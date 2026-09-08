@@ -13,7 +13,7 @@ from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 
 APP_NAME = "Project Exit Plan — Portfolio Hub"
-APP_VERSION = "0.2.2"
+APP_VERSION = "0.2.3"
 SCHEMA_VERSION = 1
 
 POLL_SECONDS = max(5, min(int(float(os.getenv("AGGREGATE_POLL_SECONDS", "20"))), 300))
@@ -29,7 +29,7 @@ SOURCES = {
 }
 
 EXPECTED_SOURCE_BUILDS = {
-    "indices": os.getenv("INDICES_EXPECTED_BUILD", "v10.1.54").strip(),
+    "indices": os.getenv("INDICES_EXPECTED_BUILD", "v10.1.55").strip(),
     "metals": os.getenv("METALS_EXPECTED_BUILD", "v1.6.33").strip(),
     "bco": os.getenv("BCO_EXPECTED_BUILD", "0.8.9").strip(),
 }
@@ -50,6 +50,50 @@ NAV_MISMATCH_ABS_GBP = max(
 NAV_MISMATCH_PCT = max(
     0.0, float(os.getenv("PORTFOLIO_NAV_MISMATCH_PCT", "0.0025"))
 )
+
+# Signal-feed freshness is intentionally separate from service/API freshness.
+# Hourly TradingView alerts can stop while the producer apps remain perfectly
+# healthy, so the Hub tracks the most recent signal timestamp independently.
+SIGNAL_WARN_AFTER_SECONDS = max(
+    900, int(float(os.getenv("PORTFOLIO_SIGNAL_WARN_AFTER_SECONDS", "5400")))
+)
+SIGNAL_STALE_AFTER_SECONDS = max(
+    SIGNAL_WARN_AFTER_SECONDS + 300,
+    int(float(os.getenv("PORTFOLIO_SIGNAL_STALE_AFTER_SECONDS", "9000"))),
+)
+
+
+def signal_expected_now() -> bool:
+    """Conservative 24/5 guard to avoid weekend false alarms.
+
+    Producer feeds are hourly CFDs. We deliberately keep this broad: Monday to
+    Friday is considered active. The 150-minute stale threshold tolerates a
+    normal one-hour market/data pause without hiding a genuinely expired alert.
+    """
+    return datetime.now(timezone.utc).weekday() < 5
+
+
+def signal_health_state(last_signal_at_utc: Any) -> Dict[str, Any]:
+    age = iso_age_seconds(last_signal_at_utc)
+    expected = signal_expected_now()
+    if not expected:
+        status = "MARKET_CLOSED"
+    elif age is None:
+        status = "UNKNOWN"
+    elif age > SIGNAL_STALE_AFTER_SECONDS:
+        status = "STALE"
+    elif age > SIGNAL_WARN_AFTER_SECONDS:
+        status = "LATE"
+    else:
+        status = "OK"
+    return {
+        "status": status,
+        "expected_now": expected,
+        "last_signal_at_utc": last_signal_at_utc or None,
+        "age_seconds": age,
+        "warn_after_seconds": SIGNAL_WARN_AFTER_SECONDS,
+        "stale_after_seconds": SIGNAL_STALE_AFTER_SECONDS,
+    }
 
 app = FastAPI(title=APP_NAME, version=APP_VERSION)
 
@@ -227,6 +271,9 @@ def source_view(key: str) -> Dict[str, Any]:
     state["expected_build"] = expected_build
     state["reported_build"] = reported_build
     state["build_match"] = (not expected_build) or (reported_build == expected_build)
+    health = data.get("health") if isinstance(data, dict) else {}
+    last_signal_at_utc = (health or {}).get("last_signal_at_utc") if isinstance(health, dict) else None
+    state["signal"] = signal_health_state(last_signal_at_utc)
     return state
 
 
@@ -317,11 +364,32 @@ def aggregate_snapshot() -> Dict[str, Any]:
     if nav_disagreement:
         portfolio_warnings.append("live NAV mismatch")
 
+    signal_alerts = []
+    for key, view in views.items():
+        sig = view.get("signal") or {}
+        status = str(sig.get("status") or "UNKNOWN").upper()
+        if status in ("STALE", "UNKNOWN") and sig.get("expected_now"):
+            signal_alerts.append({
+                "strategy": key,
+                "label": SOURCES[key]["label"],
+                "status": status,
+                "last_signal_at_utc": sig.get("last_signal_at_utc"),
+                "age_seconds": sig.get("age_seconds"),
+                "mode": ((view.get("data") or {}).get("mode") if isinstance(view.get("data"), dict) else None),
+            })
+
     return {
         "app": APP_NAME,
         "version": APP_VERSION,
         "generated_at_utc": now_iso(),
         "sources": views,
+        "signal_feed": {
+            "status": "ALERT" if signal_alerts else "OK",
+            "alerts": signal_alerts,
+            "expected_now": signal_expected_now(),
+            "warn_after_seconds": SIGNAL_WARN_AFTER_SECONDS,
+            "stale_after_seconds": SIGNAL_STALE_AFTER_SECONDS,
+        },
         "portfolio": {
             "scope": list(LIVE_PORTFOLIO_STRATEGIES),
             "complete": len(portfolio_warnings) == 0,
@@ -357,6 +425,7 @@ def health() -> Dict[str, Any]:
                 "expected_build": v.get("expected_build"),
                 "reported_build": v.get("reported_build"),
                 "build_match": v.get("build_match"),
+                "signal": v.get("signal"),
                 "error": v.get("error"),
             }
             for k, v in snap["sources"].items()
@@ -385,8 +454,9 @@ h1{margin:2px 0 4px;font-size:30px}.sub{color:var(--muted);font-size:12px;margin
 .strategy{background:var(--panel);border:1px solid var(--border);border-radius:12px;margin:8px 0;overflow:hidden}.strategy-head{display:flex;justify-content:space-between;gap:8px;align-items:center;padding:9px 11px;border-bottom:1px solid var(--border)}.strategy-title{font-weight:800}.badges{display:flex;gap:6px;align-items:center}.badge{font-size:10px;font-weight:800;border:1px solid var(--border);border-radius:999px;padding:3px 6px}.green{color:var(--green)}.amber{color:var(--amber)}.red{color:var(--red)}.muted{color:var(--muted)}
 .cards{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:7px;padding:8px}.card{background:var(--panel2);border:1px solid var(--border);border-radius:9px;padding:9px;min-height:78px}.label{color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.04em}.value{font-size:22px;font-weight:800;margin-top:5px}.small{font-size:10px;color:var(--muted);margin-top:4px;line-height:1.35}
 .portfolio{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:7px;margin:13px 0}.portfolio .card{min-height:70px}
+.signal-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px;margin:7px 0 12px}.signal-card{background:var(--panel2);border:1px solid var(--border);border-radius:9px;padding:9px;min-height:72px}.signal-card.ok{border-color:#285f42}.signal-card.late{border-color:#7d652a}.signal-card.stale,.signal-card.unknown{border-color:#7a3434}.signal-alert{border:1px solid #7a3434;background:#2a1518;color:var(--red);border-radius:9px;padding:9px 11px;margin:6px 0 8px;font-size:12px;font-weight:800}.signal-ok{border:1px solid #285f42;background:#102219;color:var(--green);border-radius:9px;padding:7px 10px;margin:6px 0 8px;font-size:11px;font-weight:800}
 details{background:var(--panel);border:1px solid var(--border);border-radius:10px;margin:8px 0}summary{cursor:pointer;padding:11px;font-weight:800}.body{border-top:1px solid var(--border);padding:11px;color:var(--muted);font-size:12px;line-height:1.5}.section-title{font-size:17px;margin:16px 0 7px}
-@media(max-width:800px){body{padding:8px}h1{font-size:25px}.cards{grid-template-columns:repeat(2,minmax(0,1fr))}.portfolio{grid-template-columns:repeat(2,minmax(0,1fr))}.value{font-size:19px}.strategy-head{align-items:flex-start}}
+@media(max-width:800px){body{padding:8px}h1{font-size:25px}.cards{grid-template-columns:repeat(2,minmax(0,1fr))}.portfolio{grid-template-columns:repeat(2,minmax(0,1fr))}.signal-grid{grid-template-columns:1fr}.value{font-size:19px}.strategy-head{align-items:flex-start}}
 </style>
 </head>
 <body><div class="page">
@@ -394,6 +464,9 @@ details{background:var(--panel);border:1px solid var(--border);border-radius:10p
 <div class="sub">Live portfolio overview · read-only · practice/demo strategies remain visible but excluded from live-money totals</div>
 <div class="section-title">Live Portfolio</div><div id="portfolioNote" class="top-status">Waiting for live portfolio scope…</div>
 <div id="portfolio" class="portfolio"></div>
+<div class="section-title">Signal Feed Health</div>
+<div id="signalBanner">Checking hourly TradingView feeds…</div>
+<div id="signalGrid" class="signal-grid"></div>
 <div id="topStatus" class="top-status">Loading live strategy snapshots…</div>
 <div id="strategies"></div>
 <details><summary>Accounting</summary><div class="body" id="accounting">Waiting for connected strategy accounting data.</div></details>
@@ -413,6 +486,8 @@ function when(v){if(!v)return '—';try{return new Date(v).toLocaleString('en-GB
 function stateBadge(s){if(!s.configured)return '<span class="badge red">NOT CONFIGURED</span>';if(!s.data)return '<span class="badge red">UNAVAILABLE</span>';if(s.build_match===false)return '<span class="badge red">BUILD MISMATCH</span>';if(s.stale)return '<span class="badge amber">STALE</span>';if(s.ok)return '<span class="badge green">FRESH DATA</span>';return '<span class="badge amber">LAST GOOD</span>'}
 function strategyHtml(key,s){const d=s.data||{},b=d.basket||{},mode=(d.mode||'unknown').toUpperCase(),status=(d.status||'UNKNOWN').toUpperCase(),dir=(b.direction||'').toUpperCase();const hw=[rr(b.high_water_r),when(b.high_water_at_utc)].filter(x=>x&&x!=='—').join(' · ');return `<div class="strategy"><div class="strategy-head"><div class="strategy-title">${NAMES[key]}</div><div class="badges"><span class="badge">${mode}</span><span class="badge">${d.source_build||'BUILD ?'}</span><span class="badge">${status}${dir?' · '+dir:''}</span>${stateBadge(s)}</div></div><div class="cards"><div class="card"><div class="label">Broker P&amp;L</div><div class="value ${cls(b.pnl_gbp)}">${money(b.pnl_gbp)}</div><div class="small">${rr(b.pnl_r)}</div></div><div class="card"><div class="label">High Water</div><div class="value">${money(b.high_water_gbp)}</div><div class="small">${hw||'—'}</div></div><div class="card"><div class="label">Giveback</div><div class="value">${money(b.giveback_gbp)}</div><div class="small">${rr(b.giveback_r)}</div></div><div class="card"><div class="label">Open Trades</div><div class="value">${intval(b.open_trades)}</div><div class="small">Updated ${when(d.updated_at_utc)}</div></div></div></div>`}
 function card(label,val,sub=''){return `<div class="card"><div class="label">${label}</div><div class="value">${val}</div><div class="small">${sub}</div></div>`}
-async function load(){try{const res=await fetch('/api/aggregate',{cache:'no-store'});const x=await res.json();document.getElementById('strategies').innerHTML=ORDER.map(k=>strategyHtml(k,x.sources[k]||{})).join('');const p=x.portfolio||{};const scope=(p.scope||[]).map(k=>NAMES[k]||k).join(' + ');const warns=p.warnings||[];document.getElementById('portfolioNote').innerHTML=p.complete?`<span class="green"><strong>LIVE scope: ${scope||'none'} · complete</strong></span>`:`<span class="amber"><strong>LIVE scope: ${scope||'none'} · ${warns.join(' · ')||'partial'}</strong></span>`;document.getElementById('portfolio').innerHTML=[card('Portfolio NAV',money(p.nav_gbp),p.nav_disagreement?'LIVE NAV materially different — review':`Shared live broker NAV · freshest ${NAMES[p.nav_source]||p.nav_source||'source'}${num(p.nav_spread_gbp)!==null&&num(p.nav_spread_gbp)>0?' · source drift '+money(p.nav_spread_gbp):''}`),card('Unrealised P&L',money(p.unrealised_pnl_gbp),'LIVE strategies only'),card('MTD Realised',money(p.realised_month_gbp),'LIVE strategies only'),card('Open Risk',money(p.open_risk_estimate_gbp),'LIVE open trades × approved risk'),card('Drawdown',money(p.drawdown_gbp),'Stage 2')].join('');document.getElementById('accounting').innerHTML=ORDER.map(k=>{const s=x.sources[k]||{},a=(s.data||{}).accounting||{};return `<strong>${NAMES[k]}</strong> — Today ${money(a.realised_today_gbp)} · Week ${money(a.realised_week_gbp)} · Month ${money(a.realised_month_gbp)} · All time ${money(a.realised_all_time_gbp)}`}).join('<br>');document.getElementById('exposure').innerHTML=ORDER.map(k=>{const d=(x.sources[k]||{}).data||{},b=d.basket||{};return `<strong>${NAMES[k]}</strong> — ${intval(b.open_trades)} open · risk/trade ${money(d.risk_per_trade_gbp)} · basket ${money(b.pnl_gbp)}`}).join('<br>');document.getElementById('health').innerHTML=ORDER.map(k=>{const s=x.sources[k]||{},err=s.error?` · ${s.error}`:'';return `<strong>${NAMES[k]}</strong> — ${s.ok&&!s.stale&&s.build_match!==false?'OK':s.build_match===false?'BUILD MISMATCH':s.stale?'STALE':'DEGRADED'} · build ${s.reported_build||'—'} (expected ${s.expected_build||'—'}) · last good ${when(s.last_good_at_utc)}${err}`}).join('<br>');document.getElementById('topStatus').textContent='Last Portfolio Hub refresh '+when(x.generated_at_utc)+' · auto-refresh 20s'}catch(e){document.getElementById('topStatus').textContent='Portfolio Hub API unavailable: '+e}}
+function ageText(seconds){const n=num(seconds);if(n===null)return 'age unknown';const mins=Math.floor(n/60);if(mins<60)return `${mins}m ago`;const h=Math.floor(mins/60),m=mins%60;return `${h}h ${m}m ago`}
+function signalCard(key,s){const sig=s.signal||{},status=(sig.status||'UNKNOWN').toUpperCase(),last=sig.last_signal_at_utc;let css=status.toLowerCase(),tone=status==='OK'?'green':status==='LATE'?'amber':status==='MARKET_CLOSED'?'muted':'red';let headline=status==='OK'?'OK — signals arriving':status==='LATE'?'LATE — check feed':status==='STALE'?'STALE — ACTION REQUIRED':status==='MARKET_CLOSED'?'Market closed':'NO SIGNAL TIMESTAMP';return `<div class="signal-card ${css}"><div class="label">${NAMES[key]}</div><div class="value ${tone}" style="font-size:17px">${headline}</div><div class="small">Last signal ${when(last)} · ${ageText(sig.age_seconds)}</div></div>`}
+async function load(){try{const res=await fetch('/api/aggregate',{cache:'no-store'});const x=await res.json();document.getElementById('strategies').innerHTML=ORDER.map(k=>strategyHtml(k,x.sources[k]||{})).join('');document.getElementById('signalGrid').innerHTML=ORDER.map(k=>signalCard(k,x.sources[k]||{})).join('');const sf=x.signal_feed||{},alerts=sf.alerts||[];document.getElementById('signalBanner').innerHTML=alerts.length?`<div class="signal-alert">⚠ SIGNAL FEED ALERT — ${alerts.map(a=>`${NAMES[a.strategy]||a.label||a.strategy}: ${a.status}${a.last_signal_at_utc?' · last '+when(a.last_signal_at_utc):''}${num(a.age_seconds)!==null?' · '+ageText(a.age_seconds):''}`).join(' | ')}</div>`:`<div class="signal-ok">✓ Signal feeds healthy — latest hourly alerts are arriving within the expected window.</div>`;const p=x.portfolio||{};const scope=(p.scope||[]).map(k=>NAMES[k]||k).join(' + ');const warns=p.warnings||[];document.getElementById('portfolioNote').innerHTML=p.complete?`<span class="green"><strong>LIVE scope: ${scope||'none'} · complete</strong></span>`:`<span class="amber"><strong>LIVE scope: ${scope||'none'} · ${warns.join(' · ')||'partial'}</strong></span>`;document.getElementById('portfolio').innerHTML=[card('Portfolio NAV',money(p.nav_gbp),p.nav_disagreement?'LIVE NAV materially different — review':`Shared live broker NAV · freshest ${NAMES[p.nav_source]||p.nav_source||'source'}${num(p.nav_spread_gbp)!==null&&num(p.nav_spread_gbp)>0?' · source drift '+money(p.nav_spread_gbp):''}`),card('Unrealised P&L',money(p.unrealised_pnl_gbp),'LIVE strategies only'),card('MTD Realised',money(p.realised_month_gbp),'LIVE strategies only'),card('Open Risk',money(p.open_risk_estimate_gbp),'LIVE open trades × approved risk'),card('Drawdown',money(p.drawdown_gbp),'Stage 2')].join('');document.getElementById('accounting').innerHTML=ORDER.map(k=>{const s=x.sources[k]||{},a=(s.data||{}).accounting||{};return `<strong>${NAMES[k]}</strong> — Today ${money(a.realised_today_gbp)} · Week ${money(a.realised_week_gbp)} · Month ${money(a.realised_month_gbp)} · All time ${money(a.realised_all_time_gbp)}`}).join('<br>');document.getElementById('exposure').innerHTML=ORDER.map(k=>{const d=(x.sources[k]||{}).data||{},b=d.basket||{};return `<strong>${NAMES[k]}</strong> — ${intval(b.open_trades)} open · risk/trade ${money(d.risk_per_trade_gbp)} · basket ${money(b.pnl_gbp)}`}).join('<br>');document.getElementById('health').innerHTML=ORDER.map(k=>{const s=x.sources[k]||{},err=s.error?` · ${s.error}`:'';const sig=s.signal||{};return `<strong>${NAMES[k]}</strong> — service ${s.ok&&!s.stale&&s.build_match!==false?'OK':s.build_match===false?'BUILD MISMATCH':s.stale?'STALE':'DEGRADED'} · signal ${(sig.status||'UNKNOWN')} · last signal ${when(sig.last_signal_at_utc)} · build ${s.reported_build||'—'} (expected ${s.expected_build||'—'}) · last good ${when(s.last_good_at_utc)}${err}`}).join('<br>');document.getElementById('topStatus').textContent='Last Portfolio Hub refresh '+when(x.generated_at_utc)+' · auto-refresh 20s'}catch(e){document.getElementById('topStatus').textContent='Portfolio Hub API unavailable: '+e}}
 load(); setInterval(load,20000);
 </script></body></html>'''
