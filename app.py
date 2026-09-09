@@ -13,7 +13,7 @@ from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 
 APP_NAME = "Project Exit Plan — Portfolio Hub"
-APP_VERSION = "0.2.3"
+APP_VERSION = "0.2.4"
 SCHEMA_VERSION = 1
 
 POLL_SECONDS = max(5, min(int(float(os.getenv("AGGREGATE_POLL_SECONDS", "20"))), 300))
@@ -31,7 +31,7 @@ SOURCES = {
 EXPECTED_SOURCE_BUILDS = {
     "indices": os.getenv("INDICES_EXPECTED_BUILD", "v10.1.55").strip(),
     "metals": os.getenv("METALS_EXPECTED_BUILD", "v1.6.33").strip(),
-    "bco": os.getenv("BCO_EXPECTED_BUILD", "0.8.9").strip(),
+    "bco": os.getenv("BCO_EXPECTED_BUILD", "0.8.10").strip(),
 }
 
 LIVE_PORTFOLIO_STRATEGIES = tuple(
@@ -175,6 +175,8 @@ def validate_summary(key: str, payload: Any) -> Dict[str, Any]:
             "high_water_gbp": safe_float(basket.get("high_water_gbp")),
             "high_water_r": safe_float(basket.get("high_water_r")),
             "high_water_at_utc": basket.get("high_water_at_utc"),
+            "high_water_gbp_source": str(basket.get("high_water_gbp_source") or ""),
+            "high_water_gbp_snapshot_at_utc": basket.get("high_water_gbp_snapshot_at_utc"),
             "giveback_gbp": safe_float(basket.get("giveback_gbp")),
             "giveback_r": safe_float(basket.get("giveback_r")),
         },
