@@ -13,7 +13,7 @@ from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 
 APP_NAME = "Project Exit Plan — Portfolio Hub"
-APP_VERSION = "0.2.6"
+APP_VERSION = "0.2.7"
 SCHEMA_VERSION = 1
 
 POLL_SECONDS = max(5, min(int(float(os.getenv("AGGREGATE_POLL_SECONDS", "20"))), 300))
@@ -30,7 +30,7 @@ SOURCES = {
 
 EXPECTED_SOURCE_BUILDS = {
     "indices": os.getenv("INDICES_EXPECTED_BUILD", "v10.1.56").strip(),
-    "metals": os.getenv("METALS_EXPECTED_BUILD", "v1.6.33").strip(),
+    "metals": os.getenv("METALS_EXPECTED_BUILD", "v1.6.34").strip(),
     "bco": os.getenv("BCO_EXPECTED_BUILD", "0.8.12").strip(),
 }
 
