@@ -13,7 +13,7 @@ from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 
 APP_NAME = "Project Exit Plan — Portfolio Hub"
-APP_VERSION = "0.2.9"
+APP_VERSION = "0.3.0"
 SCHEMA_VERSION = 1
 
 POLL_SECONDS = max(5, min(int(float(os.getenv("AGGREGATE_POLL_SECONDS", "20"))), 300))
@@ -28,11 +28,11 @@ SOURCES = {
     "bco": {"label": "BCO", "url": os.getenv("BCO_SERVICE_URL", "").strip().rstrip("/")},
 }
 
-EXPECTED_SOURCE_BUILDS = {
-    "indices": os.getenv("INDICES_EXPECTED_BUILD", "v10.1.57").strip(),
-    "metals": os.getenv("METALS_EXPECTED_BUILD", "v1.6.35").strip(),
-    "bco": os.getenv("BCO_EXPECTED_BUILD", "0.8.12").strip(),
-}
+# v0.3.0: producer app versions are informational only.
+# Compatibility is enforced by the shared portfolio-summary schema contract,
+# not by exact Indices/Metals/BCO build numbers. Producer apps can therefore
+# be upgraded independently without requiring a Portfolio Hub redeploy.
+REQUIRED_SOURCE_SCHEMA_VERSION = SCHEMA_VERSION
 
 LIVE_PORTFOLIO_STRATEGIES = tuple(
     x.strip().lower()
@@ -140,8 +140,10 @@ def validate_summary(key: str, payload: Any) -> Dict[str, Any]:
     if not isinstance(payload, dict):
         raise ValueError("summary payload must be an object")
     schema = safe_int(payload.get("schema_version"))
-    if schema != SCHEMA_VERSION:
-        raise ValueError(f"schema_version must be {SCHEMA_VERSION}")
+    if schema != REQUIRED_SOURCE_SCHEMA_VERSION:
+        raise ValueError(
+            f"schema_version must be {REQUIRED_SOURCE_SCHEMA_VERSION}; received {schema}"
+        )
     strategy = str(payload.get("strategy") or "").strip().lower()
     if strategy != key:
         raise ValueError(f"strategy must be '{key}'")
@@ -281,11 +283,18 @@ def source_view(key: str) -> Dict[str, Any]:
     state["data_age_seconds"] = age
     state["stale"] = bool(age is None or age > STALE_AFTER_SECONDS)
     state["configured"] = bool(SOURCES[key]["url"])
-    expected_build = EXPECTED_SOURCE_BUILDS.get(key) or ""
+    # A successful fetch/validation proves the producer speaks the required
+    # schema. Build/version remains informational for display and audit only.
     reported_build = str(data.get("source_build") or "") if isinstance(data, dict) else ""
-    state["expected_build"] = expected_build
     state["reported_build"] = reported_build
-    state["build_match"] = (not expected_build) or (reported_build == expected_build)
+    state["required_schema_version"] = REQUIRED_SOURCE_SCHEMA_VERSION
+    state["reported_schema_version"] = (
+        safe_int(data.get("schema_version")) if isinstance(data, dict) else None
+    )
+    state["contract_match"] = bool(
+        isinstance(data, dict)
+        and state["reported_schema_version"] == REQUIRED_SOURCE_SCHEMA_VERSION
+    )
     health = data.get("health") if isinstance(data, dict) else {}
     last_signal_at_utc = (health or {}).get("last_signal_at_utc") if isinstance(health, dict) else None
     state["signal"] = signal_health_state(last_signal_at_utc)
@@ -311,8 +320,6 @@ def aggregate_snapshot() -> Dict[str, Any]:
             continue
         if view.get("stale"):
             portfolio_warnings.append(f"{key}: stale")
-        if view.get("build_match") is False:
-            portfolio_warnings.append(f"{key}: build mismatch")
         live_rows.append((key, data, view))
 
     live_values = [row[1] for row in live_rows]
@@ -429,7 +436,7 @@ def health() -> Dict[str, Any]:
         "status": "ok",
         "version": APP_VERSION,
         "configured_sources": {k: bool(v["url"]) for k, v in SOURCES.items()},
-        "expected_source_builds": EXPECTED_SOURCE_BUILDS,
+        "required_source_schema_version": REQUIRED_SOURCE_SCHEMA_VERSION,
         "live_portfolio_strategies": LIVE_PORTFOLIO_STRATEGIES,
         "source_state": {
             k: {
@@ -437,9 +444,10 @@ def health() -> Dict[str, Any]:
                 "stale": v.get("stale"),
                 "checked_at_utc": v.get("checked_at_utc"),
                 "last_good_at_utc": v.get("last_good_at_utc"),
-                "expected_build": v.get("expected_build"),
                 "reported_build": v.get("reported_build"),
-                "build_match": v.get("build_match"),
+                "required_schema_version": v.get("required_schema_version"),
+                "reported_schema_version": v.get("reported_schema_version"),
+                "contract_match": v.get("contract_match"),
                 "signal": v.get("signal"),
                 "error": v.get("error"),
             }
@@ -476,7 +484,7 @@ details{background:var(--panel);border:1px solid var(--border);border-radius:10p
 </head>
 <body><div class="page">
 <h1>Project Exit Plan — Portfolio Hub</h1>
-<div class="sub">Live portfolio overview · read-only · practice/demo strategies remain visible but excluded from live-money totals</div>
+<div class="sub">v0.3.0 · Live portfolio overview · read-only · producer build numbers are informational; schema contract controls compatibility · practice/demo strategies remain visible but excluded from live-money totals</div>
 <div class="section-title">Live Portfolio</div><div id="portfolioNote" class="top-status">Waiting for live portfolio scope…</div>
 <div id="portfolio" class="portfolio"></div>
 <div class="section-title">Signal Feed Health</div>
@@ -498,11 +506,11 @@ function rr(v){const n=num(v);if(n===null)return '—';return (n>0?'+':'')+n.toF
 function intval(v){const n=num(v);return n===null?'—':String(Math.round(n))}
 function cls(v){const n=num(v);return n===null?'':(n>0?'green':n<0?'red':'')}
 function when(v){if(!v)return '—';try{return new Date(v).toLocaleString('en-GB',{timeZone:'Europe/London',day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit',second:'2-digit'})}catch{return String(v)}}
-function stateBadge(s){if(!s.configured)return '<span class="badge red">NOT CONFIGURED</span>';if(!s.data)return '<span class="badge red">UNAVAILABLE</span>';if(s.build_match===false)return '<span class="badge red">BUILD MISMATCH</span>';if(s.stale)return '<span class="badge amber">STALE</span>';if(s.ok)return '<span class="badge green">FRESH DATA</span>';return '<span class="badge amber">LAST GOOD</span>'}
+function stateBadge(s){if(!s.configured)return '<span class="badge red">NOT CONFIGURED</span>';if(!s.data)return '<span class="badge red">UNAVAILABLE</span>';if(s.contract_match===false)return '<span class="badge red">SCHEMA MISMATCH</span>';if(s.stale)return '<span class="badge amber">STALE</span>';if(s.ok)return '<span class="badge green">FRESH DATA</span>';return '<span class="badge amber">LAST GOOD</span>'}
 function strategyHtml(key,s){const d=s.data||{},b=d.basket||{},em=d.exit_management||{},mode=(d.mode||'unknown').toUpperCase(),status=(d.status||'UNKNOWN').toUpperCase(),dir=(b.direction||'').toUpperCase();const hw=[rr(b.high_water_r),when(b.high_water_at_utc)].filter(x=>x&&x!=='—').join(' · ');const managerBadges=key==='bco'?`${em.current_manager&&em.current_manager!=='FLAT'?`<span class="badge">EXIT ${em.current_manager}</span>`:''}${em.next_cycle_manager&&em.next_cycle_manager!==em.current_manager?`<span class="badge green">NEXT ${em.next_cycle_manager}</span>`:''}${em.live_cutover_ready?'<span class="badge green">READY FOR LIVE CUTOVER</span>':''}`:'';return `<div class="strategy"><div class="strategy-head"><div class="strategy-title">${NAMES[key]}</div><div class="badges"><span class="badge">${mode}</span><span class="badge">${d.source_build||'BUILD ?'}</span><span class="badge">${status}${dir?' · '+dir:''}</span>${managerBadges}${stateBadge(s)}</div></div><div class="cards"><div class="card"><div class="label">Broker P&amp;L</div><div class="value ${cls(b.pnl_gbp)}">${money(b.pnl_gbp)}</div><div class="small">${rr(b.pnl_r)}</div></div><div class="card"><div class="label">High Water</div><div class="value">${money(b.high_water_gbp)}</div><div class="small">${hw||'—'}</div></div><div class="card"><div class="label">Giveback</div><div class="value">${money(b.giveback_gbp)}</div><div class="small">${rr(b.giveback_r)}</div></div><div class="card"><div class="label">Open Trades</div><div class="value">${intval(b.open_trades)}</div><div class="small">${key==='bco'&&em.live_cutover_status?em.live_cutover_status.replaceAll('_',' ')+' · ':''}Updated ${when(d.updated_at_utc)}</div></div></div></div>`}
 function card(label,val,sub=''){return `<div class="card"><div class="label">${label}</div><div class="value">${val}</div><div class="small">${sub}</div></div>`}
 function ageText(seconds){const n=num(seconds);if(n===null)return 'age unknown';const mins=Math.floor(n/60);if(mins<60)return `${mins}m ago`;const h=Math.floor(mins/60),m=mins%60;return `${h}h ${m}m ago`}
 function signalCard(key,s){const sig=s.signal||{},status=(sig.status||'UNKNOWN').toUpperCase(),last=sig.last_signal_at_utc;let css=status.toLowerCase(),tone=status==='OK'?'green':status==='LATE'?'amber':status==='MARKET_CLOSED'?'muted':'red';let headline=status==='OK'?'OK — signals arriving':status==='LATE'?'LATE — check feed':status==='STALE'?'STALE — ACTION REQUIRED':status==='MARKET_CLOSED'?'Market closed':'NO SIGNAL TIMESTAMP';return `<div class="signal-card ${css}"><div class="label">${NAMES[key]}</div><div class="value ${tone}" style="font-size:17px">${headline}</div><div class="small">Last signal ${when(last)} · ${ageText(sig.age_seconds)}</div></div>`}
-async function load(){try{const res=await fetch('/api/aggregate',{cache:'no-store'});const x=await res.json();document.getElementById('strategies').innerHTML=ORDER.map(k=>strategyHtml(k,x.sources[k]||{})).join('');document.getElementById('signalGrid').innerHTML=ORDER.map(k=>signalCard(k,x.sources[k]||{})).join('');const sf=x.signal_feed||{},alerts=sf.alerts||[];document.getElementById('signalBanner').innerHTML=alerts.length?`<div class="signal-alert">⚠ SIGNAL FEED ALERT — ${alerts.map(a=>`${NAMES[a.strategy]||a.label||a.strategy}: ${a.status}${a.last_signal_at_utc?' · last '+when(a.last_signal_at_utc):''}${num(a.age_seconds)!==null?' · '+ageText(a.age_seconds):''}`).join(' | ')}</div>`:`<div class="signal-ok">✓ Signal feeds healthy — latest hourly alerts are arriving within the expected window.</div>`;const p=x.portfolio||{};const scope=(p.scope||[]).map(k=>NAMES[k]||k).join(' + ');const warns=p.warnings||[];document.getElementById('portfolioNote').innerHTML=p.complete?`<span class="green"><strong>LIVE scope: ${scope||'none'} · complete</strong></span>`:`<span class="amber"><strong>LIVE scope: ${scope||'none'} · ${warns.join(' · ')||'partial'}</strong></span>`;document.getElementById('portfolio').innerHTML=[card('Portfolio NAV',money(p.nav_gbp),p.nav_disagreement?'LIVE NAV materially different — review':`Shared live broker NAV · freshest ${NAMES[p.nav_source]||p.nav_source||'source'}${num(p.nav_spread_gbp)!==null&&num(p.nav_spread_gbp)>0?' · source drift '+money(p.nav_spread_gbp):''}`),card('Unrealised P&L',money(p.unrealised_pnl_gbp),'LIVE strategies only'),card('MTD Realised',money(p.realised_month_gbp),'LIVE strategies only'),card('Open Risk',money(p.open_risk_estimate_gbp),'LIVE open trades × approved risk'),card('Drawdown',money(p.drawdown_gbp),'Stage 2')].join('');document.getElementById('accounting').innerHTML=ORDER.map(k=>{const s=x.sources[k]||{},a=(s.data||{}).accounting||{};return `<strong>${NAMES[k]}</strong> — Today ${money(a.realised_today_gbp)} · Week ${money(a.realised_week_gbp)} · Month ${money(a.realised_month_gbp)} · All time ${money(a.realised_all_time_gbp)}`}).join('<br>');document.getElementById('exposure').innerHTML=ORDER.map(k=>{const d=(x.sources[k]||{}).data||{},b=d.basket||{};return `<strong>${NAMES[k]}</strong> — ${intval(b.open_trades)} open · risk/trade ${money(d.risk_per_trade_gbp)} · basket ${money(b.pnl_gbp)}`}).join('<br>');document.getElementById('health').innerHTML=ORDER.map(k=>{const s=x.sources[k]||{},err=s.error?` · ${s.error}`:'';const sig=s.signal||{};return `<strong>${NAMES[k]}</strong> — service ${s.ok&&!s.stale&&s.build_match!==false?'OK':s.build_match===false?'BUILD MISMATCH':s.stale?'STALE':'DEGRADED'} · signal ${(sig.status||'UNKNOWN')} · last signal ${when(sig.last_signal_at_utc)} · build ${s.reported_build||'—'} (expected ${s.expected_build||'—'}) · last good ${when(s.last_good_at_utc)}${err}`}).join('<br>');document.getElementById('topStatus').textContent='Last Portfolio Hub refresh '+when(x.generated_at_utc)+' · auto-refresh 20s'}catch(e){document.getElementById('topStatus').textContent='Portfolio Hub API unavailable: '+e}}
+async function load(){try{const res=await fetch('/api/aggregate',{cache:'no-store'});const x=await res.json();document.getElementById('strategies').innerHTML=ORDER.map(k=>strategyHtml(k,x.sources[k]||{})).join('');document.getElementById('signalGrid').innerHTML=ORDER.map(k=>signalCard(k,x.sources[k]||{})).join('');const sf=x.signal_feed||{},alerts=sf.alerts||[];document.getElementById('signalBanner').innerHTML=alerts.length?`<div class="signal-alert">⚠ SIGNAL FEED ALERT — ${alerts.map(a=>`${NAMES[a.strategy]||a.label||a.strategy}: ${a.status}${a.last_signal_at_utc?' · last '+when(a.last_signal_at_utc):''}${num(a.age_seconds)!==null?' · '+ageText(a.age_seconds):''}`).join(' | ')}</div>`:`<div class="signal-ok">✓ Signal feeds healthy — latest hourly alerts are arriving within the expected window.</div>`;const p=x.portfolio||{};const scope=(p.scope||[]).map(k=>NAMES[k]||k).join(' + ');const warns=p.warnings||[];document.getElementById('portfolioNote').innerHTML=p.complete?`<span class="green"><strong>LIVE scope: ${scope||'none'} · complete</strong></span>`:`<span class="amber"><strong>LIVE scope: ${scope||'none'} · ${warns.join(' · ')||'partial'}</strong></span>`;document.getElementById('portfolio').innerHTML=[card('Portfolio NAV',money(p.nav_gbp),p.nav_disagreement?'LIVE NAV materially different — review':`Shared live broker NAV · freshest ${NAMES[p.nav_source]||p.nav_source||'source'}${num(p.nav_spread_gbp)!==null&&num(p.nav_spread_gbp)>0?' · source drift '+money(p.nav_spread_gbp):''}`),card('Unrealised P&L',money(p.unrealised_pnl_gbp),'LIVE strategies only'),card('MTD Realised',money(p.realised_month_gbp),'LIVE strategies only'),card('Open Risk',money(p.open_risk_estimate_gbp),'LIVE open trades × approved risk'),card('Drawdown',money(p.drawdown_gbp),'Stage 2')].join('');document.getElementById('accounting').innerHTML=ORDER.map(k=>{const s=x.sources[k]||{},a=(s.data||{}).accounting||{};return `<strong>${NAMES[k]}</strong> — Today ${money(a.realised_today_gbp)} · Week ${money(a.realised_week_gbp)} · Month ${money(a.realised_month_gbp)} · All time ${money(a.realised_all_time_gbp)}`}).join('<br>');document.getElementById('exposure').innerHTML=ORDER.map(k=>{const d=(x.sources[k]||{}).data||{},b=d.basket||{};return `<strong>${NAMES[k]}</strong> — ${intval(b.open_trades)} open · risk/trade ${money(d.risk_per_trade_gbp)} · basket ${money(b.pnl_gbp)}`}).join('<br>');document.getElementById('health').innerHTML=ORDER.map(k=>{const s=x.sources[k]||{},err=s.error?` · ${s.error}`:'';const sig=s.signal||{};return `<strong>${NAMES[k]}</strong> — service ${s.ok&&!s.stale&&s.contract_match!==false?'OK':s.contract_match===false?'SCHEMA MISMATCH':s.stale?'STALE':'DEGRADED'} · signal ${(sig.status||'UNKNOWN')} · last signal ${when(sig.last_signal_at_utc)} · build ${s.reported_build||'—'} · schema ${s.reported_schema_version??'—'}/${s.required_schema_version??'—'} · last good ${when(s.last_good_at_utc)}${err}`}).join('<br>');document.getElementById('topStatus').textContent='Last Portfolio Hub refresh '+when(x.generated_at_utc)+' · auto-refresh 20s'}catch(e){document.getElementById('topStatus').textContent='Portfolio Hub API unavailable: '+e}}
 load(); setInterval(load,20000);
 </script></body></html>'''
