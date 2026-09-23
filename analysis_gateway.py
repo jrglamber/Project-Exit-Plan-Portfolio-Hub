@@ -21,7 +21,7 @@ from typing import Any, Dict
 import app as core
 
 app = core.app
-ANALYSIS_GATEWAY_VERSION = "1.0.0"
+ANALYSIS_GATEWAY_VERSION = "1.1.0"
 ANALYSIS_POLL_SECONDS = max(30, min(int(float(os.getenv("ANALYSIS_POLL_SECONDS", "60"))), 900))
 ANALYSIS_TIMEOUT_SECONDS = max(1.0, min(float(os.getenv("ANALYSIS_TIMEOUT_SECONDS", "8")), 20.0))
 
@@ -70,36 +70,40 @@ def _public_safe(payload: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def _refresh_bco() -> None:
-    base = (core.SOURCES.get("bco") or {}).get("url") or ""
+def _refresh_sources() -> None:
     checked = _now()
-    try:
-        payload = _public_safe(_fetch_json(base.rstrip("/") + "/analysis/status"))
-        state = {"ok": True, "checked_at_utc": checked, "error": None, "data": payload}
-    except Exception as exc:
-        with _analysis_lock:
-            previous = _analysis_cache.get("bco", {})
-        state = {
-            "ok": False,
-            "checked_at_utc": checked,
-            "error": f"{type(exc).__name__}: {exc}",
-            "data": previous.get("data"),
-        }
-    with _analysis_lock:
-        _analysis_cache["bco"] = state
+    states: Dict[str, Dict[str, Any]] = {}
+    for name in ("bco", "metals", "indices"):
+        base = (core.SOURCES.get(name) or {}).get("url") or ""
+        try:
+            if not base:
+                raise RuntimeError("source URL not configured")
+            payload = _public_safe(_fetch_json(base.rstrip("/") + "/analysis/status"))
+            state = {"ok": True, "checked_at_utc": checked, "error": None, "data": payload}
+        except Exception as exc:
+            with _analysis_lock:
+                previous = _analysis_cache.get(name, {})
+            state = {
+                "ok": False,
+                "checked_at_utc": checked,
+                "error": f"{type(exc).__name__}: {exc}",
+                "data": previous.get("data"),
+            }
+        states[name] = state
 
-    # Deliberately compact, machine-readable and secret-free. This makes the
-    # Railway connector a safe read path for ChatGPT while richer APIs evolve.
+    with _analysis_lock:
+        _analysis_cache.update(states)
+
     print("PEP_ANALYSIS_SNAPSHOT " + json.dumps({
         "gateway_version": ANALYSIS_GATEWAY_VERSION,
         "generated_at_utc": checked,
-        "sources": {"bco": state},
+        "sources": states,
     }, separators=(",", ":"), default=str), flush=True)
 
 
 def _analysis_worker() -> None:
     while True:
-        _refresh_bco()
+        _refresh_sources()
         time.sleep(ANALYSIS_POLL_SECONDS)
 
 
@@ -122,5 +126,5 @@ def api_analysis() -> Dict[str, Any]:
         "read_only": True,
         "execution_authority": False,
         "sources": sources,
-        "planned_sources": ["metals", "indices"],
+        "planned_sources": [],
     }
