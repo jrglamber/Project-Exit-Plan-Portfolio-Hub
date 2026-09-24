@@ -25,8 +25,8 @@ import app as core
 
 # Stable outer app: explicit wrapper routes take precedence over the unchanged core app.
 app = FastAPI(title="Project Exit Plan — Wrapper")
-ANALYSIS_GATEWAY_VERSION = "1.7.0"
-VISIBLE_HUB_VERSION = "0.3.9"
+ANALYSIS_GATEWAY_VERSION = "1.7.1"
+VISIBLE_HUB_VERSION = "0.3.10"
 ANALYSIS_POLL_SECONDS = max(30, min(int(float(os.getenv("ANALYSIS_POLL_SECONDS", "60"))), 900))
 ANALYSIS_TIMEOUT_SECONDS = max(1.0, min(float(os.getenv("ANALYSIS_TIMEOUT_SECONDS", "8")), 20.0))
 
@@ -175,7 +175,7 @@ def api_analysis_slice(source: str, slice_name: str, limit: int = 100) -> Dict[s
         "payload": payload,
     }
 
-def _emit_research_pack(limit: int = 40) -> Dict[str, Any]:
+def _emit_research_pack(limit: int = 12) -> Dict[str, Any]:
     """Emit a compact bounded pack to Railway logs for direct ChatGPT analysis."""
     pack: Dict[str, Any] = {}
     for source in ("metals", "indices"):
@@ -185,6 +185,15 @@ def _emit_research_pack(limit: int = 40) -> Dict[str, Any]:
                 pack[source][slice_name] = _fetch_analysis_slice(source, slice_name, limit)
             except Exception as exc:
                 pack[source][slice_name] = {"status":"error","error":f"{type(exc).__name__}: {exc}"}
+    # Raw JSON/blob columns can be enormous and duplicate the structured fields.
+    # Strip them from the log transport only; producer endpoints remain unchanged.
+    def compact(value):
+        if isinstance(value, dict):
+            return {k: compact(v) for k, v in value.items() if k not in ("raw_json", "point_in_time_json", "response_summary_json")}
+        if isinstance(value, list):
+            return [compact(v) for v in value]
+        return value
+    pack = compact(pack)
     print("PEP_ANALYSIS_RESEARCH_PACK " + json.dumps({
         "gateway_version": ANALYSIS_GATEWAY_VERSION,
         "generated_at_utc": _now(),
@@ -215,7 +224,7 @@ def _analysis_worker() -> None:
         if cycle % discovery_every == 0 or producer_changed:
             try:
                 _refresh_discovery()
-                _emit_research_pack(40)
+                _emit_research_pack(12)
             except Exception as exc:
                 print("PEP_ANALYSIS_DISCOVERY_ERROR " + f"{type(exc).__name__}: {exc}", flush=True)
         last_contracts = contracts
