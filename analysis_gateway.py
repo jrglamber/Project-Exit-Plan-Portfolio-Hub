@@ -25,8 +25,8 @@ import app as core
 
 # Stable outer app: explicit wrapper routes take precedence over the unchanged core app.
 app = FastAPI(title="Project Exit Plan — Wrapper")
-ANALYSIS_GATEWAY_VERSION = "1.7.2"
-VISIBLE_HUB_VERSION = "0.3.11"
+ANALYSIS_GATEWAY_VERSION = "1.8.0"
+VISIBLE_HUB_VERSION = "0.3.12"
 ANALYSIS_POLL_SECONDS = max(30, min(int(float(os.getenv("ANALYSIS_POLL_SECONDS", "60"))), 900))
 ANALYSIS_TIMEOUT_SECONDS = max(1.0, min(float(os.getenv("ANALYSIS_TIMEOUT_SECONDS", "8")), 20.0))
 
@@ -194,12 +194,25 @@ def _emit_research_pack(limit: int = 12) -> Dict[str, Any]:
             return [compact(v) for v in value]
         return value
     pack = compact(pack)
-    print("PEP_ANALYSIS_RESEARCH_PACK " + json.dumps({
+    # Emit one record per source/slice so Railway retrieval never depends on
+    # a single oversized all-project log line.
+    generated = _now()
+    for source, slices in pack.items():
+        for slice_name, payload in slices.items():
+            print("PEP_ANALYSIS_SLICE " + json.dumps({
+                "gateway_version": ANALYSIS_GATEWAY_VERSION,
+                "generated_at_utc": generated,
+                "limit_per_table": max(1, min(int(limit), 250)),
+                "source": source,
+                "slice": slice_name,
+                "payload": payload,
+            }, separators=(",", ":"), default=str), flush=True)
+    print("PEP_ANALYSIS_RESEARCH_PACK_READY " + json.dumps({
         "gateway_version": ANALYSIS_GATEWAY_VERSION,
-        "generated_at_utc": _now(),
-        "limit_per_table": max(1, min(int(limit), 250)),
-        "sources": pack,
-    }, separators=(",", ":"), default=str), flush=True)
+        "generated_at_utc": generated,
+        "sources": sorted(pack),
+        "slices": list(ANALYSIS_SLICES),
+    }, separators=(",", ":")), flush=True)
     return pack
 
 
