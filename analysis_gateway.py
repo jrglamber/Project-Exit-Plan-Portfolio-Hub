@@ -25,8 +25,8 @@ import app as core
 
 # Stable outer app: explicit wrapper routes take precedence over the unchanged core app.
 app = FastAPI(title="Project Exit Plan — Wrapper")
-ANALYSIS_GATEWAY_VERSION = "1.7.1"
-VISIBLE_HUB_VERSION = "0.3.10"
+ANALYSIS_GATEWAY_VERSION = "1.7.2"
+VISIBLE_HUB_VERSION = "0.3.11"
 ANALYSIS_POLL_SECONDS = max(30, min(int(float(os.getenv("ANALYSIS_POLL_SECONDS", "60"))), 900))
 ANALYSIS_TIMEOUT_SECONDS = max(1.0, min(float(os.getenv("ANALYSIS_TIMEOUT_SECONDS", "8")), 20.0))
 
@@ -189,7 +189,7 @@ def _emit_research_pack(limit: int = 12) -> Dict[str, Any]:
     # Strip them from the log transport only; producer endpoints remain unchanged.
     def compact(value):
         if isinstance(value, dict):
-            return {k: compact(v) for k, v in value.items() if k not in ("raw_json", "point_in_time_json", "response_summary_json")}
+            return {k: compact(v) for k, v in value.items() if k not in ("raw_json", "point_in_time_json", "response_summary_json", "details_json", "payload_json", "request_json", "response_json", "snapshot_json", "metadata_json", "context_json", "decision_json")}
         if isinstance(value, list):
             return [compact(v) for v in value]
         return value
