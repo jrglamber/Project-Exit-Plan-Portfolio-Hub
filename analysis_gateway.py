@@ -567,6 +567,7 @@ def _analysis_worker() -> None:
                 _emit_rolling_hwm_causal_study()
                 _emit_mature_hwm_causal_study()
                 _emit_hwm_giveback_path_study()
+                _emit_indices_rich_state_catalog()
                 _emit_bco_history_pack(100)
             except Exception as exc:
                 print("PEP_ANALYSIS_DISCOVERY_ERROR " + f"{type(exc).__name__}: {exc}", flush=True)
