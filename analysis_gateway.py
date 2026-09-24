@@ -25,7 +25,7 @@ import app as core
 
 # Stable outer app: explicit wrapper routes take precedence over the unchanged core app.
 app = FastAPI(title="Project Exit Plan — Wrapper")
-ANALYSIS_GATEWAY_VERSION = "1.25.1"
+ANALYSIS_GATEWAY_VERSION = "1.25.2"
 VISIBLE_HUB_VERSION = "0.3.31"
 ANALYSIS_POLL_SECONDS = max(30, min(int(float(os.getenv("ANALYSIS_POLL_SECONDS", "60"))), 900))
 ANALYSIS_TIMEOUT_SECONDS = max(1.0, min(float(os.getenv("ANALYSIS_TIMEOUT_SECONDS", "8")), 20.0))
@@ -626,7 +626,7 @@ def _analysis_worker() -> None:
                 _emit_indices_rich_state_catalog()
                 _emit_protection_generalisation_panel()
                 _emit_adaptive_context_observers()
-        _emit_repair_quality()
+                _emit_repair_quality()
                 _emit_bco_history_pack(100)
             except Exception as exc:
                 print("PEP_ANALYSIS_DISCOVERY_ERROR " + f"{type(exc).__name__}: {exc}", flush=True)
