@@ -25,8 +25,8 @@ import app as core
 
 # Stable outer app: explicit wrapper routes take precedence over the unchanged core app.
 app = FastAPI(title="Project Exit Plan — Wrapper")
-ANALYSIS_GATEWAY_VERSION = "1.8.0"
-VISIBLE_HUB_VERSION = "0.3.12"
+ANALYSIS_GATEWAY_VERSION = "1.9.0"
+VISIBLE_HUB_VERSION = "0.3.13"
 ANALYSIS_POLL_SECONDS = max(30, min(int(float(os.getenv("ANALYSIS_POLL_SECONDS", "60"))), 900))
 ANALYSIS_TIMEOUT_SECONDS = max(1.0, min(float(os.getenv("ANALYSIS_TIMEOUT_SECONDS", "8")), 20.0))
 
@@ -154,6 +154,31 @@ def _fetch_analysis_slice(source: str, slice_name: str, limit: int = 100) -> Dic
         raise ValueError("unknown analysis slice")
     bounded = max(1, min(int(limit), 250))
     return _fetch_producer_endpoint(source, f"/analysis/slice/{slice_name}?limit={bounded}")
+
+@app.get("/api/analysis/episode/{source}/{slice_name}")
+def api_analysis_episode(source: str, slice_name: str, limit: int = 100) -> Dict[str, Any]:
+    """Fetch a larger bounded historical window on demand without widening periodic logs."""
+    try:
+        bounded = max(1, min(int(limit), 250))
+        payload = _fetch_analysis_slice(source, slice_name, bounded)
+        status, error = "ok", None
+    except Exception as exc:
+        payload = {}
+        bounded = max(1, min(int(limit), 250))
+        status, error = "error", f"{type(exc).__name__}: {exc}"
+    return {
+        "status": status,
+        "gateway_version": ANALYSIS_GATEWAY_VERSION,
+        "generated_at_utc": _now(),
+        "read_only": True,
+        "execution_authority": False,
+        "source": source,
+        "slice": slice_name,
+        "historical_window": True,
+        "limit_per_table": bounded,
+        "error": error,
+        "payload": payload,
+    }
 
 @app.get("/api/analysis/slice/{source}/{slice_name}")
 def api_analysis_slice(source: str, slice_name: str, limit: int = 100) -> Dict[str, Any]:
