@@ -25,8 +25,8 @@ import app as core
 
 # Stable outer app: explicit wrapper routes take precedence over the unchanged core app.
 app = FastAPI(title="Project Exit Plan — Wrapper")
-ANALYSIS_GATEWAY_VERSION = "1.21.0"
-VISIBLE_HUB_VERSION = "0.3.28"
+ANALYSIS_GATEWAY_VERSION = "1.22.0"
+VISIBLE_HUB_VERSION = "0.3.29"
 ANALYSIS_POLL_SECONDS = max(30, min(int(float(os.getenv("ANALYSIS_POLL_SECONDS", "60"))), 900))
 ANALYSIS_TIMEOUT_SECONDS = max(1.0, min(float(os.getenv("ANALYSIS_TIMEOUT_SECONDS", "8")), 20.0))
 
@@ -146,6 +146,37 @@ def api_analysis_discovery() -> Dict[str, Any]:
         "execution_authority": False,
         "sources": _refresh_discovery(),
     }
+
+
+
+def _emit_indices_rich_state_catalog() -> None:
+    try:
+        payload = _fetch_producer_endpoint("indices", "/analysis/rich-state-catalog")
+        print("PEP_INDICES_RICH_STATE_CATALOG " + json.dumps({
+            "gateway_version": ANALYSIS_GATEWAY_VERSION,
+            "read_only": True,
+            "execution_authority": False,
+            "source": "indices",
+            "payload": payload,
+        }, separators=(",", ":"), default=str), flush=True)
+    except Exception as exc:
+        print("PEP_INDICES_RICH_STATE_CATALOG " + json.dumps({
+            "gateway_version": ANALYSIS_GATEWAY_VERSION,
+            "read_only": True,
+            "execution_authority": False,
+            "source": "indices",
+            "error": type(exc).__name__ + ": " + str(exc),
+        }, separators=(",", ":"), default=str), flush=True)
+
+@app.get("/api/analysis/indices/rich-state-catalog")
+def api_indices_rich_state_catalog() -> Dict[str, Any]:
+    try:
+        payload = _fetch_producer_endpoint("indices", "/analysis/rich-state-catalog")
+        status, error = "ok", None
+    except Exception as exc:
+        payload, status, error = {}, "error", type(exc).__name__ + ": " + str(exc)
+    return {"status":status,"gateway_version":ANALYSIS_GATEWAY_VERSION,"read_only":True,
+            "execution_authority":False,"error":error,"payload":payload}
 
 
 ANALYSIS_SLICES = ("trades", "signals", "execution", "harvest", "hwm", "exits", "research")
@@ -536,6 +567,7 @@ def _analysis_worker() -> None:
                 _emit_rolling_hwm_causal_study()
                 _emit_mature_hwm_causal_study()
                 _emit_hwm_giveback_path_study()
+                _emit_indices_rich_state_catalog()
                 _emit_bco_history_pack(100)
             except Exception as exc:
                 print("PEP_ANALYSIS_DISCOVERY_ERROR " + f"{type(exc).__name__}: {exc}", flush=True)
