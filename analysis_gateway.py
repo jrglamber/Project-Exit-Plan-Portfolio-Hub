@@ -25,7 +25,7 @@ import app as core
 
 # Stable outer app: explicit wrapper routes take precedence over the unchanged core app.
 app = FastAPI(title="Project Exit Plan — Wrapper")
-ANALYSIS_GATEWAY_VERSION = "1.24.0"
+ANALYSIS_GATEWAY_VERSION = "1.24.1"
 VISIBLE_HUB_VERSION = "0.3.31"
 ANALYSIS_POLL_SECONDS = max(30, min(int(float(os.getenv("ANALYSIS_POLL_SECONDS", "60"))), 900))
 ANALYSIS_TIMEOUT_SECONDS = max(1.0, min(float(os.getenv("ANALYSIS_TIMEOUT_SECONDS", "8")), 20.0))
@@ -208,7 +208,7 @@ def api_adaptive_context(source: str, limit: int = 160) -> Dict[str, Any]:
 def _emit_adaptive_context_observers() -> None:
     for source in ("indices","metals","bco"):
         try:
-            payload=_fetch_producer_endpoint(source,"/analysis/adaptive-protection-context?limit=160")
+            payload=_fetch_producer_endpoint(source,f"/analysis/adaptive-protection-context?limit={40 if source=='indices' else 160}")
             print("PEP_ADAPTIVE_CONTEXT "+json.dumps({"gateway_version":ANALYSIS_GATEWAY_VERSION,"read_only":True,
               "execution_authority":False,"source":source,"payload":payload},separators=(",",":"),default=str),flush=True)
         except Exception as exc:
