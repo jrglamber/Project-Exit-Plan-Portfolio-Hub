@@ -305,7 +305,10 @@ def _analysis_worker() -> None:
             try:
                 _refresh_discovery()
                 _emit_research_pack(12)
-                # Historical episode windows are emitted only with discovery\n                # (startup / ~15 min / producer version change), not every poll.\n                _emit_historical_episode_pack(250)\n            except Exception as exc:
+                # Historical episode windows are emitted only with discovery
+                # (startup / ~15 min / producer version change), not every poll.
+                _emit_historical_episode_pack(250)
+            except Exception as exc:
                 print("PEP_ANALYSIS_DISCOVERY_ERROR " + f"{type(exc).__name__}: {exc}", flush=True)
         last_contracts = contracts
         cycle += 1
