@@ -25,8 +25,8 @@ import app as core
 
 # Stable outer app: explicit wrapper routes take precedence over the unchanged core app.
 app = FastAPI(title="Project Exit Plan — Wrapper")
-ANALYSIS_GATEWAY_VERSION = "1.9.1"
-VISIBLE_HUB_VERSION = "0.3.14"
+ANALYSIS_GATEWAY_VERSION = "1.9.2"
+VISIBLE_HUB_VERSION = "0.3.15"
 ANALYSIS_POLL_SECONDS = max(30, min(int(float(os.getenv("ANALYSIS_POLL_SECONDS", "60"))), 900))
 ANALYSIS_TIMEOUT_SECONDS = max(1.0, min(float(os.getenv("ANALYSIS_TIMEOUT_SECONDS", "8")), 20.0))
 
@@ -241,6 +241,75 @@ def _emit_research_pack(limit: int = 12) -> Dict[str, Any]:
     return pack
 
 
+def _emit_compact_episode_index() -> None:
+    """Emit compact historical landmarks without widening the raw-row transport.
+
+    The producer APIs remain SELECT-only.  This index intentionally derives
+    landmarks only from rows already exposed by the bounded HWM/harvest slices;
+    it never gains execution authority or mutates producer state.
+    """
+    generated = _now()
+    for source in ("metals", "indices"):
+        try:
+            hwm = _fetch_analysis_slice(source, "hwm", 250)
+            harvest = _fetch_analysis_slice(source, "harvest", 250)
+            hdata = ((hwm.get("data") or {}) if isinstance(hwm, dict) else {})
+            vdata = ((harvest.get("data") or {}) if isinstance(harvest, dict) else {})
+            landmarks = []
+            for table, rows in hdata.items():
+                if not isinstance(rows, list):
+                    continue
+                # Intrahour NEW_HIGH tables can contain hundreds of near-identical
+                # rows. Preserve only economically useful maxima plus cycle rows.
+                if table in ("active_basket_cycles", "active_family_basket_cycles"):
+                    for row in rows:
+                        if isinstance(row, dict):
+                            landmarks.append({"table": table, **row})
+                    continue
+                numeric = []
+                for row in rows:
+                    if not isinstance(row, dict):
+                        continue
+                    vals = [row.get(k) for k in ("high_water_gbp", "high_water_pnl", "high_water_r")]
+                    score = max([abs(float(v)) for v in vals if isinstance(v, (int, float))] or [0.0])
+                    numeric.append((score, row))
+                for _, row in sorted(numeric, key=lambda x: x[0], reverse=True)[:5]:
+                    landmarks.append({"table": table, **row})
+            harvest_events = []
+            for table, rows in vdata.items():
+                if isinstance(rows, list):
+                    for row in rows:
+                        if isinstance(row, dict):
+                            harvest_events.append({"table": table, **row})
+            # Keep executed/meaningful events and deduplicate repeated historical
+            # NO_ELIGIBLE polling noise by cycle+threshold+status.
+            seen = set()
+            compact_harvest = []
+            for row in harvest_events:
+                key = (row.get("family_cycle_id") or row.get("basket_cycle_id"), row.get("threshold_r"), row.get("status"))
+                if key in seen:
+                    continue
+                seen.add(key)
+                compact_harvest.append(row)
+            print("PEP_ANALYSIS_EPISODE_INDEX " + json.dumps({
+                "gateway_version": ANALYSIS_GATEWAY_VERSION,
+                "generated_at_utc": generated,
+                "read_only": True,
+                "execution_authority": False,
+                "source": source,
+                "landmarks": landmarks[:40],
+                "harvest_landmarks": compact_harvest[:40],
+                "note": "bounded index; use targeted drill-down for older cycles beyond producer slice window",
+            }, separators=(",", ":"), default=str), flush=True)
+        except Exception as exc:
+            print("PEP_ANALYSIS_EPISODE_INDEX_ERROR " + json.dumps({
+                "gateway_version": ANALYSIS_GATEWAY_VERSION,
+                "generated_at_utc": generated,
+                "source": source,
+                "error": f"{type(exc).__name__}: {exc}",
+            }, separators=(",", ":")), flush=True)
+
+
 def _emit_historical_episode_pack(limit: int = 250) -> None:
     """Emit bounded historical research windows for offline episode studies.
 
@@ -308,6 +377,7 @@ def _analysis_worker() -> None:
                 # Historical episode windows are emitted only with discovery
                 # (startup / ~15 min / producer version change), not every poll.
                 _emit_historical_episode_pack(250)
+                _emit_compact_episode_index()
             except Exception as exc:
                 print("PEP_ANALYSIS_DISCOVERY_ERROR " + f"{type(exc).__name__}: {exc}", flush=True)
         last_contracts = contracts
