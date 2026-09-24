@@ -25,8 +25,8 @@ import app as core
 
 # Stable outer app: explicit wrapper routes take precedence over the unchanged core app.
 app = FastAPI(title="Project Exit Plan — Wrapper")
-ANALYSIS_GATEWAY_VERSION = "1.12.0"
-VISIBLE_HUB_VERSION = "0.3.18"
+ANALYSIS_GATEWAY_VERSION = "1.13.0"
+VISIBLE_HUB_VERSION = "0.3.19"
 ANALYSIS_POLL_SECONDS = max(30, min(int(float(os.getenv("ANALYSIS_POLL_SECONDS", "60"))), 900))
 ANALYSIS_TIMEOUT_SECONDS = max(1.0, min(float(os.getenv("ANALYSIS_TIMEOUT_SECONDS", "8")), 20.0))
 
@@ -263,6 +263,20 @@ def _emit_producer_episode_index() -> None:
         except Exception as exc:
             print("PEP_PRODUCER_EPISODE_INDEX_ERROR " + source + " " + type(exc).__name__ + ": " + str(exc), flush=True)
 
+def _emit_adaptive_protection_study() -> None:
+    """Bridge the Indices producer-native adaptive protection trajectory study."""
+    try:
+        payload = _fetch_producer_endpoint("indices", "/analysis/adaptive-protection-study")
+        print("PEP_ADAPTIVE_PROTECTION_STUDY " + json.dumps({
+            "gateway_version": ANALYSIS_GATEWAY_VERSION,
+            "read_only": True,
+            "execution_authority": False,
+            "source": "indices",
+            "payload": payload,
+        }, separators=(",", ":"), default=str), flush=True)
+    except Exception as exc:
+        print("PEP_ADAPTIVE_PROTECTION_STUDY_ERROR indices " + type(exc).__name__ + ": " + str(exc), flush=True)
+
 
 def _emit_compact_episode_index() -> None:
     """Emit compact historical landmarks without widening the raw-row transport.
@@ -402,6 +416,7 @@ def _analysis_worker() -> None:
                 _emit_historical_episode_pack(250)
                 _emit_compact_episode_index()
                 _emit_producer_episode_index()
+                _emit_adaptive_protection_study()
                 _emit_bco_history_pack(100)
             except Exception as exc:
                 print("PEP_ANALYSIS_DISCOVERY_ERROR " + f"{type(exc).__name__}: {exc}", flush=True)
