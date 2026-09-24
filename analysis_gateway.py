@@ -25,8 +25,8 @@ import app as core
 
 # Stable outer app: explicit wrapper routes take precedence over the unchanged core app.
 app = FastAPI(title="Project Exit Plan — Wrapper")
-ANALYSIS_GATEWAY_VERSION = "1.10.0"
-VISIBLE_HUB_VERSION = "0.3.16"
+ANALYSIS_GATEWAY_VERSION = "1.11.0"
+VISIBLE_HUB_VERSION = "0.3.17"
 ANALYSIS_POLL_SECONDS = max(30, min(int(float(os.getenv("ANALYSIS_POLL_SECONDS", "60"))), 900))
 ANALYSIS_TIMEOUT_SECONDS = max(1.0, min(float(os.getenv("ANALYSIS_TIMEOUT_SECONDS", "8")), 20.0))
 
@@ -116,9 +116,12 @@ def _fetch_producer_endpoint(name: str, endpoint: str) -> Dict[str, Any]:
 def _refresh_discovery() -> Dict[str, Any]:
     checked = _now()
     out: Dict[str, Any] = {}
-    for name in ("metals", "indices"):
+    for name in ("bco", "metals", "indices"):
         producer: Dict[str, Any] = {"checked_at_utc": checked}
-        for key, endpoint in (("schema", "/analysis/schema"), ("catalog", "/analysis/catalog"), ("summary", "/analysis/summary")):
+        endpoints = [("schema", "/analysis/schema"), ("catalog", "/analysis/catalog")]
+        if name != "bco":
+            endpoints.append(("summary", "/analysis/summary"))
+        for key, endpoint in endpoints:
             try:
                 payload = _fetch_producer_endpoint(name, endpoint)
                 producer[key] = payload
@@ -146,6 +149,7 @@ def api_analysis_discovery() -> Dict[str, Any]:
 
 
 ANALYSIS_SLICES = ("trades", "signals", "execution", "harvest", "hwm", "exits", "research")
+BCO_ANALYSIS_SLICES = ("signals", "execution", "harvest", "exits", "research")
 
 def _fetch_analysis_slice(source: str, slice_name: str, limit: int = 100) -> Dict[str, Any]:
     if source not in ("metals", "indices"):
@@ -239,6 +243,15 @@ def _emit_research_pack(limit: int = 12) -> Dict[str, Any]:
         "slices": list(ANALYSIS_SLICES),
     }, separators=(",", ":")), flush=True)
     return pack
+
+
+def _emit_bco_history_pack(limit: int = 100) -> None:
+    for slice_name in BCO_ANALYSIS_SLICES:
+        try:
+            payload = _fetch_producer_endpoint("bco", f"/analysis/slice/{slice_name}?limit={max(1, min(int(limit), 250))}")
+            print("PEP_BCO_HISTORY_SLICE " + json.dumps({"gateway_version": ANALYSIS_GATEWAY_VERSION, "read_only": True, "execution_authority": False, "slice": slice_name, "payload": payload}, separators=(",", ":"), default=str), flush=True)
+        except Exception as exc:
+            print("PEP_BCO_HISTORY_SLICE_ERROR " + slice_name + " " + type(exc).__name__ + ": " + str(exc), flush=True)
 
 
 def _emit_producer_episode_index() -> None:
@@ -387,6 +400,7 @@ def _analysis_worker() -> None:
                 _emit_historical_episode_pack(250)
                 _emit_compact_episode_index()
                 _emit_producer_episode_index()
+                _emit_bco_history_pack(100)
             except Exception as exc:
                 print("PEP_ANALYSIS_DISCOVERY_ERROR " + f"{type(exc).__name__}: {exc}", flush=True)
         last_contracts = contracts
