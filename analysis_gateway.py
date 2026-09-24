@@ -25,8 +25,8 @@ import app as core
 
 # Stable outer app: explicit wrapper routes take precedence over the unchanged core app.
 app = FastAPI(title="Project Exit Plan — Wrapper")
-ANALYSIS_GATEWAY_VERSION = "1.20.0"
-VISIBLE_HUB_VERSION = "0.3.27"
+ANALYSIS_GATEWAY_VERSION = "1.21.0"
+VISIBLE_HUB_VERSION = "0.3.28"
 ANALYSIS_POLL_SECONDS = max(30, min(int(float(os.getenv("ANALYSIS_POLL_SECONDS", "60"))), 900))
 ANALYSIS_TIMEOUT_SECONDS = max(1.0, min(float(os.getenv("ANALYSIS_TIMEOUT_SECONDS", "8")), 20.0))
 
@@ -366,6 +366,18 @@ def _emit_rolling_hwm_causal_study() -> None:
 
 
 
+
+def _emit_hwm_giveback_path_study() -> None:
+    try:
+        payload = _fetch_producer_endpoint("indices", "/analysis/hwm-giveback-path-study")
+        print("PEP_HWM_GIVEBACK_PATH_STUDY " + json.dumps({
+            "gateway_version": ANALYSIS_GATEWAY_VERSION, "read_only": True,
+            "execution_authority": False, "source": "indices", "payload": payload,
+        }, separators=(",", ":"), default=str), flush=True)
+    except Exception as exc:
+        print("PEP_HWM_GIVEBACK_PATH_STUDY_ERROR indices " + type(exc).__name__ + ": " + str(exc), flush=True)
+
+
 def _emit_mature_hwm_causal_study() -> None:
     try:
         payload = _fetch_producer_endpoint("indices", "/analysis/mature-hwm-causal-study")
@@ -523,6 +535,7 @@ def _analysis_worker() -> None:
                 _emit_protection_persistence_study()
                 _emit_rolling_hwm_causal_study()
                 _emit_mature_hwm_causal_study()
+                _emit_hwm_giveback_path_study()
                 _emit_bco_history_pack(100)
             except Exception as exc:
                 print("PEP_ANALYSIS_DISCOVERY_ERROR " + f"{type(exc).__name__}: {exc}", flush=True)
