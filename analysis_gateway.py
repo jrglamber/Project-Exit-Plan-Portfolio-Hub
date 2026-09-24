@@ -25,8 +25,8 @@ import app as core
 
 # Stable outer app: explicit wrapper routes take precedence over the unchanged core app.
 app = FastAPI(title="Project Exit Plan — Wrapper")
-ANALYSIS_GATEWAY_VERSION = "1.2.0"
-VISIBLE_HUB_VERSION = "0.3.2"
+ANALYSIS_GATEWAY_VERSION = "1.3.0"
+VISIBLE_HUB_VERSION = "0.3.3"
 ANALYSIS_POLL_SECONDS = max(30, min(int(float(os.getenv("ANALYSIS_POLL_SECONDS", "60"))), 900))
 ANALYSIS_TIMEOUT_SECONDS = max(1.0, min(float(os.getenv("ANALYSIS_TIMEOUT_SECONDS", "8")), 20.0))
 
@@ -104,6 +104,45 @@ def _refresh_sources() -> None:
         "generated_at_utc": checked,
         "sources": states,
     }, separators=(",", ":"), default=str), flush=True)
+
+
+def _fetch_producer_endpoint(name: str, endpoint: str) -> Dict[str, Any]:
+    base = (core.SOURCES.get(name) or {}).get("url") or ""
+    if not base:
+        raise RuntimeError("source URL not configured")
+    return _fetch_json(base.rstrip("/") + endpoint)
+
+
+def _refresh_discovery() -> Dict[str, Any]:
+    checked = _now()
+    out: Dict[str, Any] = {}
+    for name in ("metals", "indices"):
+        producer: Dict[str, Any] = {"checked_at_utc": checked}
+        for key, endpoint in (("schema", "/analysis/schema"), ("summary", "/analysis/summary")):
+            try:
+                payload = _fetch_producer_endpoint(name, endpoint)
+                producer[key] = payload
+            except Exception as exc:
+                producer[key] = {"status": "error", "error": f"{type(exc).__name__}: {exc}"}
+        out[name] = producer
+    print("PEP_ANALYSIS_DISCOVERY " + json.dumps({
+        "gateway_version": ANALYSIS_GATEWAY_VERSION,
+        "generated_at_utc": checked,
+        "sources": out,
+    }, separators=(",", ":"), default=str), flush=True)
+    return out
+
+
+@app.get("/api/analysis/discovery")
+def api_analysis_discovery() -> Dict[str, Any]:
+    return {
+        "gateway": "Project Exit Plan — Analysis Gateway",
+        "gateway_version": ANALYSIS_GATEWAY_VERSION,
+        "generated_at_utc": _now(),
+        "read_only": True,
+        "execution_authority": False,
+        "sources": _refresh_discovery(),
+    }
 
 
 def _analysis_worker() -> None:
