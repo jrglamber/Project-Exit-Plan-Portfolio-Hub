@@ -18,10 +18,14 @@ import urllib.request
 from datetime import datetime, timezone
 from typing import Any, Dict
 
+from fastapi import Request
+from fastapi.responses import Response
+
 import app as core
 
 app = core.app
-ANALYSIS_GATEWAY_VERSION = "1.1.0"
+ANALYSIS_GATEWAY_VERSION = "1.2.0"
+VISIBLE_HUB_VERSION = "0.3.2"
 ANALYSIS_POLL_SECONDS = max(30, min(int(float(os.getenv("ANALYSIS_POLL_SECONDS", "60"))), 900))
 ANALYSIS_TIMEOUT_SECONDS = max(1.0, min(float(os.getenv("ANALYSIS_TIMEOUT_SECONDS", "8")), 20.0))
 
@@ -128,3 +132,46 @@ def api_analysis() -> Dict[str, Any]:
         "sources": sources,
         "planned_sources": [],
     }
+
+
+def _rewrite_hub_version(body: bytes, content_type: str) -> bytes:
+    if "text/html" not in (content_type or "").lower():
+        return body
+    try:
+        text = body.decode("utf-8")
+        current = getattr(core, "APP_VERSION", None)
+        if current and str(current) != VISIBLE_HUB_VERSION:
+            text = text.replace(str(current), VISIBLE_HUB_VERSION)
+        return text.encode("utf-8")
+    except Exception:
+        return body
+
+
+async def _hub_passthrough(request: Request, path: str) -> Response:
+    scope = dict(request.scope)
+    scope["path"] = path
+    scope["raw_path"] = path.encode("utf-8")
+    messages = []
+    async def receive():
+        return await request.receive()
+    async def send(message):
+        messages.append(message)
+    await core.app(scope, receive, send)
+    start = next((m for m in messages if m["type"] == "http.response.start"), None)
+    chunks = [m.get("body", b"") for m in messages if m["type"] == "http.response.body"]
+    if not start:
+        return Response(status_code=500)
+    headers = dict(start.get("headers", []))
+    body = _rewrite_hub_version(b"".join(chunks), headers.get(b"content-type", b"").decode("latin-1"))
+    out_headers = {k.decode("latin-1"): v.decode("latin-1") for k, v in start.get("headers", []) if k.lower() not in (b"content-length", b"content-encoding")}
+    return Response(content=body, status_code=start["status"], headers=out_headers, media_type=None)
+
+
+@app.get("/")
+async def visible_root(request: Request):
+    return await _hub_passthrough(request, "/")
+
+
+@app.get("/dashboard")
+async def visible_dashboard(request: Request):
+    return await _hub_passthrough(request, "/dashboard")
