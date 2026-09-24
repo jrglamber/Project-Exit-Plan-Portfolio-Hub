@@ -25,8 +25,8 @@ import app as core
 
 # Stable outer app: explicit wrapper routes take precedence over the unchanged core app.
 app = FastAPI(title="Project Exit Plan — Wrapper")
-ANALYSIS_GATEWAY_VERSION = "1.9.2"
-VISIBLE_HUB_VERSION = "0.3.15"
+ANALYSIS_GATEWAY_VERSION = "1.10.0"
+VISIBLE_HUB_VERSION = "0.3.16"
 ANALYSIS_POLL_SECONDS = max(30, min(int(float(os.getenv("ANALYSIS_POLL_SECONDS", "60"))), 900))
 ANALYSIS_TIMEOUT_SECONDS = max(1.0, min(float(os.getenv("ANALYSIS_TIMEOUT_SECONDS", "8")), 20.0))
 
@@ -241,6 +241,14 @@ def _emit_research_pack(limit: int = 12) -> Dict[str, Any]:
     return pack
 
 
+def _emit_producer_episode_index() -> None:
+    try:
+        payload = _fetch_producer_endpoint("metals", "/analysis/episode-index?limit=100")
+        print("PEP_PRODUCER_EPISODE_INDEX " + json.dumps({"gateway_version": ANALYSIS_GATEWAY_VERSION, "read_only": True, "execution_authority": False, "source": "metals", "payload": payload}, separators=(",", ":"), default=str), flush=True)
+    except Exception as exc:
+        print("PEP_PRODUCER_EPISODE_INDEX_ERROR " + type(exc).__name__ + ": " + str(exc), flush=True)
+
+
 def _emit_compact_episode_index() -> None:
     """Emit compact historical landmarks without widening the raw-row transport.
 
@@ -378,6 +386,7 @@ def _analysis_worker() -> None:
                 # (startup / ~15 min / producer version change), not every poll.
                 _emit_historical_episode_pack(250)
                 _emit_compact_episode_index()
+                _emit_producer_episode_index()
             except Exception as exc:
                 print("PEP_ANALYSIS_DISCOVERY_ERROR " + f"{type(exc).__name__}: {exc}", flush=True)
         last_contracts = contracts
