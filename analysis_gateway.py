@@ -25,8 +25,8 @@ import app as core
 
 # Stable outer app: explicit wrapper routes take precedence over the unchanged core app.
 app = FastAPI(title="Project Exit Plan — Wrapper")
-ANALYSIS_GATEWAY_VERSION = "1.9.0"
-VISIBLE_HUB_VERSION = "0.3.13"
+ANALYSIS_GATEWAY_VERSION = "1.9.1"
+VISIBLE_HUB_VERSION = "0.3.14"
 ANALYSIS_POLL_SECONDS = max(30, min(int(float(os.getenv("ANALYSIS_POLL_SECONDS", "60"))), 900))
 ANALYSIS_TIMEOUT_SECONDS = max(1.0, min(float(os.getenv("ANALYSIS_TIMEOUT_SECONDS", "8")), 20.0))
 
@@ -241,6 +241,48 @@ def _emit_research_pack(limit: int = 12) -> Dict[str, Any]:
     return pack
 
 
+def _emit_historical_episode_pack(limit: int = 250) -> None:
+    """Emit bounded historical research windows for offline episode studies.
+
+    This is transport-only: producer endpoints remain SELECT-only and this
+    gateway has no execution authority.  Emission is intentionally infrequent
+    so normal periodic logs stay compact.
+    """
+    bounded = max(1, min(int(limit), 250))
+    generated = _now()
+    for source in ("metals", "indices"):
+        for slice_name in ("hwm", "harvest", "research"):
+            try:
+                payload = _fetch_analysis_slice(source, slice_name, bounded)
+                # Reuse the same transport compaction policy as normal packs.
+                def compact(value):
+                    if isinstance(value, dict):
+                        return {k: compact(v) for k, v in value.items() if k not in ("raw_json", "point_in_time_json", "response_summary_json", "details_json", "payload_json", "request_json", "response_json", "snapshot_json", "metadata_json", "context_json", "decision_json")}
+                    if isinstance(value, list):
+                        return [compact(v) for v in value]
+                    return value
+                payload = compact(payload)
+                print("PEP_ANALYSIS_EPISODE " + json.dumps({
+                    "gateway_version": ANALYSIS_GATEWAY_VERSION,
+                    "generated_at_utc": generated,
+                    "read_only": True,
+                    "execution_authority": False,
+                    "source": source,
+                    "slice": slice_name,
+                    "historical_window": True,
+                    "limit_per_table": bounded,
+                    "payload": payload,
+                }, separators=(",", ":"), default=str), flush=True)
+            except Exception as exc:
+                print("PEP_ANALYSIS_EPISODE_ERROR " + json.dumps({
+                    "gateway_version": ANALYSIS_GATEWAY_VERSION,
+                    "generated_at_utc": generated,
+                    "source": source,
+                    "slice": slice_name,
+                    "error": f"{type(exc).__name__}: {exc}",
+                }, separators=(",", ":")), flush=True)
+
+
 def _analysis_worker() -> None:
     discovery_every = max(5, int(900 / ANALYSIS_POLL_SECONDS))
     cycle = 0
@@ -263,7 +305,7 @@ def _analysis_worker() -> None:
             try:
                 _refresh_discovery()
                 _emit_research_pack(12)
-            except Exception as exc:
+                # Historical episode windows are emitted only with discovery\n                # (startup / ~15 min / producer version change), not every poll.\n                _emit_historical_episode_pack(250)\n            except Exception as exc:
                 print("PEP_ANALYSIS_DISCOVERY_ERROR " + f"{type(exc).__name__}: {exc}", flush=True)
         last_contracts = contracts
         cycle += 1
