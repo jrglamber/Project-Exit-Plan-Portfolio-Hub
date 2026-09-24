@@ -25,8 +25,8 @@ import app as core
 
 # Stable outer app: explicit wrapper routes take precedence over the unchanged core app.
 app = FastAPI(title="Project Exit Plan — Wrapper")
-ANALYSIS_GATEWAY_VERSION = "1.3.0"
-VISIBLE_HUB_VERSION = "0.3.3"
+ANALYSIS_GATEWAY_VERSION = "1.3.1"
+VISIBLE_HUB_VERSION = "0.3.4"
 ANALYSIS_POLL_SECONDS = max(30, min(int(float(os.getenv("ANALYSIS_POLL_SECONDS", "60"))), 900))
 ANALYSIS_TIMEOUT_SECONDS = max(1.0, min(float(os.getenv("ANALYSIS_TIMEOUT_SECONDS", "8")), 20.0))
 
@@ -182,6 +182,11 @@ def _rewrite_hub_version(body: bytes, content_type: str) -> bytes:
         current = getattr(core, "APP_VERSION", None)
         if current and str(current) != VISIBLE_HUB_VERSION:
             text = text.replace(str(current), VISIBLE_HUB_VERSION)
+        # Core currently returns drawdown_gbp=None unconditionally, so the
+        # dashboard tile is presentation-only and misleading. Hide it until a
+        # real portfolio drawdown series is wired.
+        text = text.replace("grid-template-columns:repeat(5,minmax(0,1fr))", "grid-template-columns:repeat(4,minmax(0,1fr))")
+        text = text.replace(",card('Drawdown',money(p.drawdown_gbp),'Stage 2')", "")
         return text.encode("utf-8")
     except Exception:
         return body
