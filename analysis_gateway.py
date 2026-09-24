@@ -18,12 +18,13 @@ import urllib.request
 from datetime import datetime, timezone
 from typing import Any, Dict
 
-from fastapi import Request
+from fastapi import FastAPI, Request
 from fastapi.responses import Response
 
 import app as core
 
-app = core.app
+# Stable outer app: explicit wrapper routes take precedence over the unchanged core app.
+app = FastAPI(title="Project Exit Plan — Wrapper")
 ANALYSIS_GATEWAY_VERSION = "1.2.0"
 VISIBLE_HUB_VERSION = "0.3.2"
 ANALYSIS_POLL_SECONDS = max(30, min(int(float(os.getenv("ANALYSIS_POLL_SECONDS", "60"))), 900))
@@ -175,3 +176,7 @@ async def visible_root(request: Request):
 @app.get("/dashboard")
 async def visible_dashboard(request: Request):
     return await _hub_passthrough(request, "/dashboard")
+
+
+# Catch-all mount stays last so wrapper routes above win; all other routes remain core-owned.
+app.mount("/", core.app)
