@@ -25,8 +25,8 @@ import app as core
 
 # Stable outer app: explicit wrapper routes take precedence over the unchanged core app.
 app = FastAPI(title="Project Exit Plan — Wrapper")
-ANALYSIS_GATEWAY_VERSION = "1.3.1"
-VISIBLE_HUB_VERSION = "0.3.4"
+ANALYSIS_GATEWAY_VERSION = "1.4.0"
+VISIBLE_HUB_VERSION = "0.3.5"
 ANALYSIS_POLL_SECONDS = max(30, min(int(float(os.getenv("ANALYSIS_POLL_SECONDS", "60"))), 900))
 ANALYSIS_TIMEOUT_SECONDS = max(1.0, min(float(os.getenv("ANALYSIS_TIMEOUT_SECONDS", "8")), 20.0))
 
@@ -146,8 +146,19 @@ def api_analysis_discovery() -> Dict[str, Any]:
 
 
 def _analysis_worker() -> None:
+    discovery_every = max(5, int(900 / ANALYSIS_POLL_SECONDS))
+    cycle = 0
     while True:
         _refresh_sources()
+        # Schema/count discovery is heavier than status polling, so emit it
+        # roughly every 15 minutes rather than every minute. Run immediately
+        # after deployment so ChatGPT can map a producer without a manual hit.
+        if cycle % discovery_every == 0:
+            try:
+                _refresh_discovery()
+            except Exception as exc:
+                print("PEP_ANALYSIS_DISCOVERY_ERROR " + f"{type(exc).__name__}: {exc}", flush=True)
+        cycle += 1
         time.sleep(ANALYSIS_POLL_SECONDS)
 
 
