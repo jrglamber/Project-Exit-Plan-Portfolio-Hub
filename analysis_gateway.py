@@ -25,7 +25,7 @@ import app as core
 
 # Stable outer app: explicit wrapper routes take precedence over the unchanged core app.
 app = FastAPI(title="Project Exit Plan — Wrapper")
-ANALYSIS_GATEWAY_VERSION = "1.25.2"
+ANALYSIS_GATEWAY_VERSION = "1.26.0"
 VISIBLE_HUB_VERSION = "0.3.31"
 ANALYSIS_POLL_SECONDS = max(30, min(int(float(os.getenv("ANALYSIS_POLL_SECONDS", "60"))), 900))
 ANALYSIS_TIMEOUT_SECONDS = max(1.0, min(float(os.getenv("ANALYSIS_TIMEOUT_SECONDS", "8")), 20.0))
@@ -216,24 +216,43 @@ def _emit_adaptive_context_observers() -> None:
               "execution_authority":False,"source":source,"error":type(exc).__name__+": "+str(exc)},separators=(",",":"),default=str),flush=True)
 
 
-@app.get("/api/analysis/metals/repair-quality")
-def api_metals_repair_quality(limit: int = 250) -> Dict[str, Any]:
+@app.get("/api/analysis/repair-quality/{source}")
+def api_repair_quality(source: str, limit: int = 250) -> Dict[str, Any]:
+    if source not in ("indices","metals"):
+        return {"status":"error","gateway_version":ANALYSIS_GATEWAY_VERSION,"read_only":True,"execution_authority":False,"source":source,"error":"repair-quality study currently available for indices and metals","payload":{}}
     try:
-        payload=_fetch_producer_endpoint("metals",f"/analysis/repair-quality-study?limit={max(1,min(int(limit),250))}")
+        suffix=f"?limit={max(1,min(int(limit),250))}" if source=="metals" else ""
+        payload=_fetch_producer_endpoint(source,"/analysis/repair-quality-study"+suffix)
         status,error="ok",None
     except Exception as exc:
         payload,status,error={},"error",type(exc).__name__+": "+str(exc)
     return {"status":status,"gateway_version":ANALYSIS_GATEWAY_VERSION,"read_only":True,
-      "execution_authority":False,"source":"metals","error":error,"payload":payload}
+      "execution_authority":False,"source":source,"error":error,"payload":payload}
+
+@app.get("/api/analysis/bco/cycle-economic-context")
+def api_bco_cycle_economic_context(limit: int = 250) -> Dict[str, Any]:
+    try:
+        payload=_fetch_producer_endpoint("bco",f"/analysis/cycle-economic-context?limit={max(1,min(int(limit),250))}")
+        status,error="ok",None
+    except Exception as exc:
+        payload,status,error={},"error",type(exc).__name__+": "+str(exc)
+    return {"status":status,"gateway_version":ANALYSIS_GATEWAY_VERSION,"read_only":True,"execution_authority":False,"source":"bco","error":error,"payload":payload}
 
 def _emit_repair_quality() -> None:
+    for source in ("indices","metals"):
+        try:
+            suffix="?limit=250" if source=="metals" else ""
+            payload=_fetch_producer_endpoint(source,"/analysis/repair-quality-study"+suffix)
+            row={"gateway_version":ANALYSIS_GATEWAY_VERSION,"read_only":True,"execution_authority":False,"source":source,"payload":payload}
+        except Exception as exc:
+            row={"gateway_version":ANALYSIS_GATEWAY_VERSION,"read_only":True,"execution_authority":False,"source":source,"error":type(exc).__name__+": "+str(exc)}
+        print("PEP_REPAIR_QUALITY "+json.dumps(row,separators=(",",":"),default=str),flush=True)
     try:
-        payload=_fetch_producer_endpoint("metals","/analysis/repair-quality-study?limit=250")
-        print("PEP_REPAIR_QUALITY "+json.dumps({"gateway_version":ANALYSIS_GATEWAY_VERSION,"read_only":True,
-          "execution_authority":False,"source":"metals","payload":payload},separators=(",",":"),default=str),flush=True)
+        payload=_fetch_producer_endpoint("bco","/analysis/cycle-economic-context?limit=250")
+        row={"gateway_version":ANALYSIS_GATEWAY_VERSION,"read_only":True,"execution_authority":False,"source":"bco","study":"cycle-economic-context","payload":payload}
     except Exception as exc:
-        print("PEP_REPAIR_QUALITY "+json.dumps({"gateway_version":ANALYSIS_GATEWAY_VERSION,"read_only":True,
-          "execution_authority":False,"source":"metals","error":type(exc).__name__+": "+str(exc)},separators=(",",":"),default=str),flush=True)
+        row={"gateway_version":ANALYSIS_GATEWAY_VERSION,"read_only":True,"execution_authority":False,"source":"bco","study":"cycle-economic-context","error":type(exc).__name__+": "+str(exc)}
+    print("PEP_REPAIR_QUALITY "+json.dumps(row,separators=(",",":"),default=str),flush=True)
 
 ANALYSIS_SLICES = ("trades", "signals", "execution", "harvest", "hwm", "exits", "research")
 BCO_ANALYSIS_SLICES = ("signals", "execution", "harvest", "exits", "research")
