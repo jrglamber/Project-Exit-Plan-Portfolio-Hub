@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import threading
 import time
@@ -96,6 +97,11 @@ def signal_health_state(last_signal_at_utc: Any) -> Dict[str, Any]:
     }
 
 app = FastAPI(title=APP_NAME, version=APP_VERSION)
+
+logger = logging.getLogger("pep_portfolio_hub")
+if not logger.handlers:
+    logger.setLevel(logging.INFO)
+    logging.basicConfig(level=logging.INFO)
 
 _lock = threading.RLock()
 _cache: Dict[str, Dict[str, Any]] = {}
@@ -302,6 +308,68 @@ def source_view(key: str) -> Dict[str, Any]:
     return state
 
 
+def _pep_pnl_fields(data: Any) -> Optional[Dict[str, Any]]:
+    """Extract the compact P&L fields used by the weekly snapshot log event.
+
+    Read-only projection of an already-fetched/validated portfolio-summary
+    payload. Does not touch trading logic, execution, risk, or accounting
+    storage in any way.
+    """
+    if not isinstance(data, dict):
+        return None
+    accounting = data.get("accounting") or {}
+    basket = data.get("basket") or {}
+    return {
+        "realised_week_gbp": accounting.get("realised_week_gbp"),
+        "realised_month_gbp": accounting.get("realised_month_gbp"),
+        "unrealised_gbp": basket.get("pnl_gbp"),
+        "mode": str(data.get("mode") or "unknown").lower(),
+    }
+
+
+def _emit_pep_weekly_pnl_snapshot(views: Dict[str, Dict[str, Any]]) -> None:
+    """Emit a compact structured PEP_WEEKLY_PNL_SNAPSHOT log event.
+
+    Observability only: reuses the portfolio-summary payloads already fetched
+    from Indices, Metals and BCO. Does not mutate any state, does not affect
+    aggregate_snapshot()'s return structure, and does not alter trading logic,
+    execution, risk, entries, exits, source accounting, or databases.
+    """
+    try:
+        indices_data = (views.get("indices") or {}).get("data")
+        metals_data = (views.get("metals") or {}).get("data")
+        bco_data = (views.get("bco") or {}).get("data")
+
+        indices_fields = _pep_pnl_fields(indices_data)
+        metals_fields = _pep_pnl_fields(metals_data)
+        bco_fields = _pep_pnl_fields(bco_data)
+
+        combined_live_realised_week_gbp = None
+        if (
+            indices_fields
+            and metals_fields
+            and indices_fields.get("mode") == "live"
+            and metals_fields.get("mode") == "live"
+        ):
+            indices_week = indices_fields.get("realised_week_gbp")
+            metals_week = metals_fields.get("realised_week_gbp")
+            if isinstance(indices_week, (int, float)) and isinstance(metals_week, (int, float)):
+                combined_live_realised_week_gbp = indices_week + metals_week
+
+        snapshot = {
+            "event": "PEP_WEEKLY_PNL_SNAPSHOT",
+            "generated_at_utc": now_iso(),
+            "indices": indices_fields,
+            "metals_live": metals_fields,
+            "bco": bco_fields,
+            "combined_live_realised_week_gbp": combined_live_realised_week_gbp,
+        }
+        logger.info("PEP_WEEKLY_PNL_SNAPSHOT %s", json.dumps(snapshot, default=str))
+    except Exception:
+        # Observability must never affect the read-only aggregate/dashboard path.
+        logger.exception("failed to emit PEP_WEEKLY_PNL_SNAPSHOT")
+
+
 def aggregate_snapshot() -> Dict[str, Any]:
     views = {k: source_view(k) for k in SOURCES}
 
@@ -400,6 +468,8 @@ def aggregate_snapshot() -> Dict[str, Any]:
                 "age_seconds": sig.get("age_seconds"),
                 "mode": ((view.get("data") or {}).get("mode") if isinstance(view.get("data"), dict) else None),
             })
+
+    _emit_pep_weekly_pnl_snapshot(views)
 
     return {
         "app": APP_NAME,
