@@ -9,6 +9,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
+from financial_review import financial_review_line
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 
@@ -265,6 +266,10 @@ def refresh_all() -> None:
 def _worker() -> None:
     while True:
         refresh_all()
+        try:
+            print(financial_review_line(aggregate_snapshot()), flush=True)
+        except Exception as exc:
+            print('PEP_FINANCIAL_REVIEW_ERROR ' + str(exc), flush=True)
         time.sleep(POLL_SECONDS)
 
 
