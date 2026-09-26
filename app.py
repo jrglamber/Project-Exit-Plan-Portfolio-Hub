@@ -261,6 +261,20 @@ def refresh_all() -> None:
             except Exception:
                 pass
 
+    # Emit observability event after all sources refreshed
+    try:
+        snapshot_event = emit_pep_weekly_pnl_snapshot()
+        # Structured log output (platform-captured as deploy log event)
+        import sys
+        print(json.dumps(snapshot_event), file=sys.stdout, flush=True)
+    except Exception as exc:
+        import sys
+        print(json.dumps({
+            "event": "PEP_WEEKLY_PNL_SNAPSHOT",
+            "error": f"{type(exc).__name__}: {exc}",
+            "generated_at_utc": now_iso(),
+        }), file=sys.stdout, flush=True)
+
 
 def _worker() -> None:
     while True:
@@ -428,6 +442,95 @@ def aggregate_snapshot() -> Dict[str, Any]:
             "drawdown_gbp": None,
         },
     }
+
+
+def emit_pep_weekly_pnl_snapshot() -> Dict[str, Any]:
+    """Structured observability event: weekly PnL snapshot from live sources.
+
+    Consumes existing portfolio-summary payloads (already cached).
+    Read-only: zero execution authority, no database writes.
+    Emitted once per refresh cycle (no more than hourly in practice).
+
+    Schema:
+    - generated_at_utc: ISO timestamp
+    - indices: { realised_week_gbp, realised_month_gbp, unrealised_gbp, mode }
+    - metals_live: same structure
+    - bco: same structure (present but explicitly excluded from combined total)
+    - combined_live_realised_week_gbp: indices + metals only, when BOTH live
+    """
+    with _lock:
+        indices_state = _cache.get("indices", {})
+        metals_state = _cache.get("metals", {})
+        bco_state = _cache.get("bco", {})
+
+    snapshot = {
+        "event": "PEP_WEEKLY_PNL_SNAPSHOT",
+        "generated_at_utc": now_iso(),
+        "indices": {
+            "realised_week_gbp": None,
+            "realised_month_gbp": None,
+            "unrealised_gbp": None,
+            "mode": None,
+        },
+        "metals_live": {
+            "realised_week_gbp": None,
+            "realised_month_gbp": None,
+            "unrealised_gbp": None,
+            "mode": None,
+        },
+        "bco": {
+            "realised_week_gbp": None,
+            "realised_month_gbp": None,
+            "unrealised_gbp": None,
+            "mode": None,
+        },
+        "combined_live_realised_week_gbp": None,
+        "_note": "combined excludes practice/demo and BCO; indices+metals live only",
+    }
+
+    # Extract Indices data
+    indices_data = indices_state.get("data") if isinstance(indices_state, dict) else None
+    if isinstance(indices_data, dict):
+        accounting = indices_data.get("accounting") or {}
+        basket = indices_data.get("basket") or {}
+        snapshot["indices"]["realised_week_gbp"] = safe_float(accounting.get("realised_week_gbp"))
+        snapshot["indices"]["realised_month_gbp"] = safe_float(accounting.get("realised_month_gbp"))
+        snapshot["indices"]["unrealised_gbp"] = safe_float(basket.get("pnl_gbp"))
+        snapshot["indices"]["mode"] = str(indices_data.get("mode") or "unknown").lower()
+
+    # Extract Metals data
+    metals_data = metals_state.get("data") if isinstance(metals_state, dict) else None
+    if isinstance(metals_data, dict):
+        accounting = metals_data.get("accounting") or {}
+        basket = metals_data.get("basket") or {}
+        snapshot["metals_live"]["realised_week_gbp"] = safe_float(accounting.get("realised_week_gbp"))
+        snapshot["metals_live"]["realised_month_gbp"] = safe_float(accounting.get("realised_month_gbp"))
+        snapshot["metals_live"]["unrealised_gbp"] = safe_float(basket.get("pnl_gbp"))
+        snapshot["metals_live"]["mode"] = str(metals_data.get("mode") or "unknown").lower()
+
+    # Extract BCO data
+    bco_data = bco_state.get("data") if isinstance(bco_state, dict) else None
+    if isinstance(bco_data, dict):
+        accounting = bco_data.get("accounting") or {}
+        basket = bco_data.get("basket") or {}
+        snapshot["bco"]["realised_week_gbp"] = safe_float(accounting.get("realised_week_gbp"))
+        snapshot["bco"]["realised_month_gbp"] = safe_float(accounting.get("realised_month_gbp"))
+        snapshot["bco"]["unrealised_gbp"] = safe_float(basket.get("pnl_gbp"))
+        snapshot["bco"]["mode"] = str(bco_data.get("mode") or "unknown").lower()
+
+    # Combined live total: Indices + Metals, only when BOTH are live
+    indices_mode = snapshot["indices"]["mode"]
+    metals_mode = snapshot["metals_live"]["mode"]
+    indices_wk = snapshot["indices"]["realised_week_gbp"]
+    metals_wk = snapshot["metals_live"]["realised_week_gbp"]
+
+    if (
+        indices_mode == "live" and metals_mode == "live"
+        and indices_wk is not None and metals_wk is not None
+    ):
+        snapshot["combined_live_realised_week_gbp"] = indices_wk + metals_wk
+
+    return snapshot
 
 
 @app.get("/health")
