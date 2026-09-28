@@ -1,60 +1,49 @@
-# Project Exit Plan — Aggregate Dashboard v0.2.0
+# Project Exit Plan - Portfolio Hub v0.4.0
 
-A fourth, read-only Railway service above Indices, Metals and BCO.
+A read-only portfolio cockpit above Indices, Metals and BCO.
 
-## v0.2.0
-- Three live strategy blocks at the top.
-- Basket P&L, High Water, Giveback, Open Trades.
-- Status/mode/freshness for each source.
-- Compact portfolio strip immediately below.
-- Last-known-good cache on temporary source failure.
-- Stale/unavailable data is never silently changed to zero.
-- Shared broker NAV is never summed across strategy services.
-- No OANDA credentials and no trade write controls.
+## What v0.4.0 shows
+- Portfolio NAV, open P&L, realised today/week/month/all-time, month total and open-risk estimate.
+- Hub-observed NAV high-water and drawdown.
+- Compact live strategy cards for Indices, Metals and BCO.
+- Live-lane descriptions, approved risk/trade, current exit manager and basket state.
+- A single condensed health bar when everything is healthy.
+- A Needs Attention section that only expands when something actually needs review.
+- Recent material activity: basket open/flat/reduction, realised changes, HWM resets, manager/mode changes and feed recovery/failure.
+- Hub-captured hourly realised-P&L performance history for the current month.
+- Compact Research & Challengers summary from the read-only analysis gateway.
+- Monthly Risk Review panel. Approval remains manual-only and never resizes existing positions.
+- Deep accounting, exposure and system-health detail remains available in collapsed sections.
+
+## Safety / authority
+- Portfolio Hub is read-only.
+- No OANDA credentials.
+- No trade placement, close, harvest, stop, sizing or strategy authority.
+- Producer build numbers are informational. Schema compatibility is enforced through the shared portfolio-summary contract.
 
 ## Railway
-Deploy this folder/repository as a new service.
+Deploy this repository as the Portfolio Hub service.
 
 Set:
 - `INDICES_SERVICE_URL`
 - `METALS_SERVICE_URL`
 - `BCO_SERVICE_URL`
 
-Each source will expose `GET /api/portfolio-summary`.
+Each producer exposes `GET /api/portfolio-summary`.
+The analysis wrapper additionally consumes the producers' read-only `/analysis/*` endpoints.
 
-Do not put OANDA credentials in the aggregate service.
+Current default live-money scope is:
+
+`AGGREGATE_LIVE_STRATEGIES=indices,metals,bco`
+
+If a producer is temporarily practice/demo, it remains visible in its own strategy card but is excluded from live totals unless it reports `mode=live`.
 
 ## Endpoints
 - `/dashboard`
 - `/api/aggregate`
+- `/api/research-summary`
+- `/api/analysis`
 - `/health`
 
-See `portfolio_summary_contract.example.json` and `PRODUCER_ENDPOINT_RULES.md`.
-
-## Locked linked producer builds — 06 Sep 2026
-
-The aggregate service expects these current producer builds:
-
-- Indices: `v10.1.54`
-- Metals: `v1.6.33`
-- BCO: `0.8.9`
-
-If a connected `/api/portfolio-summary` reports a different `source_build`,
-the dashboard shows **BUILD MISMATCH** rather than silently accepting it.
-
-These expected values can be overridden with:
-`INDICES_EXPECTED_BUILD`, `METALS_EXPECTED_BUILD`, `BCO_EXPECTED_BUILD`.
-
-## v0.2.0 linked producer builds
-
-- Indices `v10.1.54` — cumulative on `v10.1.53`
-- Metals `v1.6.33` — cumulative on `v1.6.32`
-- BCO `0.8.9` — cumulative on `0.8.8`
-
-Combined live Portfolio NAV/P&L/risk defaults to `indices,metals`. BCO is still
-shown in its own top block but is excluded from combined live-money totals while
-its producer reports PRACTICE/DEMO.
-
-When BCO is explicitly promoted to live, set:
-
-`AGGREGATE_LIVE_STRATEGIES=indices,metals,bco`
+## Notes on history
+The performance chart and NAV drawdown are Hub-observed telemetry. They start collecting when the Hub process starts and are not treated as a substitute for producer accounting. Realised accounting still comes from the producer contracts.
