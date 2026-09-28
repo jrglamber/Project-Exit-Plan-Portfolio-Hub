@@ -1,8 +1,8 @@
-# Project Exit Plan - Portfolio Hub v0.5.0
+# Project Exit Plan - Portfolio Hub v0.6.0
 
 A read-only portfolio cockpit above Indices, Metals and BCO.
 
-## What v0.5.0 shows
+## What v0.6.0 shows
 - Portfolio NAV, open P&L, realised today/week/month/all-time, month total and open-risk estimate.
 - Hub-observed NAV high-water and drawdown.
 - Compact live strategy cards for Indices, Metals and BCO.
@@ -11,7 +11,7 @@ A read-only portfolio cockpit above Indices, Metals and BCO.
 - A Needs Attention section that only expands when something actually needs review.
 - Recent material activity: basket open/flat/reduction, realised changes, HWM resets, manager/mode changes and feed recovery/failure.
 - Compact Research & Challengers summary from the read-only analysis gateway.
-- Monthly Risk Review / Risk Control panel. Authenticated manual changes apply to NEW trades only and never resize existing positions.
+- Monthly Risk Review / Fixed % Risk panel: Indices 0.05%, XAU LONG 0.075%, BCO 0.10% of live NAV. A manual button recalculates the cash target from fresh NAV; broker minimum position size remains authoritative; existing positions are never resized.
 - Deep accounting, exposure and system-health detail remains available in collapsed sections.
 
 ## Safety / authority
@@ -54,3 +54,10 @@ NAV drawdown is Hub-observed telemetry and starts with the current Hub process. 
 - Removes the Portfolio performance chart.
 - Adds authenticated manual risk-per-new-trade controls for Indices, XAU LONG live, and BCO.
 - Control secrets are prompted at use time and are not stored by the Hub.
+
+## v0.6.0 fixed risk profiles
+- Indices: 0.05% of fresh live NAV per NEW NAS100/US500 trade.
+- Metals: 0.075% of fresh live NAV per NEW XAU-LONG trade.
+- BCO: 0.10% of fresh live NAV per NEW BCO trade.
+- No free-form cash-risk entry in the Hub. Each button recalculates from current NAV.
+- When the calculated unit size is below OANDA minimumTradeSize, the producer keeps its existing minimum-size sizing/overage rules and records the effective cash risk.
