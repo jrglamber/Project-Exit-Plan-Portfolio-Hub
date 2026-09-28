@@ -32,16 +32,16 @@ Open:
 
 Verify:
 
-1. Dashboard reports Portfolio Hub `v0.4.0`.
+1. Dashboard reports Portfolio Hub `v0.5.0`.
 2. Indices, Metals and BCO producer cards all load and report the expected modes.
 3. Live Portfolio includes only producers that are both in the configured live scope and currently report `mode=live`.
 4. NAV is taken from the freshest live producer snapshot and is not summed across shared-account producers.
 5. Accounting totals are live-strategy only.
 6. Needs Attention is empty when sources, signals, schema and broker/database/worker health are normal.
 7. Research & Challengers is read-only and cannot influence execution.
-8. Monthly Risk Review remains manual-only and never resizes existing positions.
-9. Performance history and NAV drawdown are labelled as Hub-observed telemetry and begin with the current Hub process.
+8. Manual risk control requires the producer control secret, changes NEW trades only, and never resizes existing positions.
+9. NAV drawdown is labelled as Hub-observed telemetry and begins with the current Hub process.
 
 ## Safety
 
-Portfolio Hub must remain display/read-only. No order placement, close, stop, harvest, sizing, HWM reset or strategy mutation belongs in this repository.
+Portfolio Hub must not place orders, close trades, move stops, harvest, reset HWM or alter strategy rules. The sole write exception is the authenticated manual risk-per-new-trade proxy explicitly requested by the user.

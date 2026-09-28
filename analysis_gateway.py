@@ -15,6 +15,7 @@ import os
 import threading
 import time
 import urllib.request
+import urllib.error
 from datetime import datetime, timezone
 from typing import Any, Dict
 
@@ -25,8 +26,8 @@ import app as core
 
 # Stable outer app: explicit wrapper routes take precedence over the unchanged core app.
 app = FastAPI(title="Project Exit Plan — Wrapper")
-ANALYSIS_GATEWAY_VERSION = "1.27.0"
-VISIBLE_HUB_VERSION = "0.4.1"
+ANALYSIS_GATEWAY_VERSION = "1.28.0"
+VISIBLE_HUB_VERSION = "0.5.0"
 ANALYSIS_POLL_SECONDS = max(30, min(int(float(os.getenv("ANALYSIS_POLL_SECONDS", "60"))), 900))
 ANALYSIS_TIMEOUT_SECONDS = max(1.0, min(float(os.getenv("ANALYSIS_TIMEOUT_SECONDS", "8")), 20.0))
 
@@ -815,6 +816,87 @@ def api_research_summary() -> Dict[str, Any]:
         "execution_authority": False,
         "sources": sources,
     }
+
+
+
+def _risk_control_fetch(name: str, method: str = "GET", payload: Dict[str, Any] | None = None, secret: str = "") -> Dict[str, Any]:
+    if name not in ("indices", "metals", "bco"):
+        raise ValueError("Unknown strategy")
+    base = (core.SOURCES.get(name) or {}).get("url") or ""
+    if not base:
+        raise RuntimeError(f"{name} source URL not configured")
+    headers = {
+        "Accept": "application/json",
+        "User-Agent": f"ProjectExitPlanRiskControl/{VISIBLE_HUB_VERSION}",
+    }
+    data = None
+    if method.upper() == "POST":
+        headers["Content-Type"] = "application/json"
+        headers["x-control-secret"] = secret
+        data = json.dumps(payload or {}).encode("utf-8")
+    req = urllib.request.Request(
+        base.rstrip("/") + "/control/risk-per-trade",
+        data=data,
+        headers=headers,
+        method=method.upper(),
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=ANALYSIS_TIMEOUT_SECONDS) as resp:
+            raw = resp.read().decode("utf-8")
+            out = json.loads(raw) if raw else {}
+            if not isinstance(out, dict):
+                out = {"status": "error", "error": "Producer returned non-object JSON"}
+            return out
+    except urllib.error.HTTPError as exc:
+        raw = exc.read().decode("utf-8", errors="replace")
+        try:
+            detail = json.loads(raw) if raw else {}
+        except Exception:
+            detail = {"error": raw or str(exc)}
+        if not isinstance(detail, dict):
+            detail = {"error": str(detail)}
+        detail.setdefault("status", "error")
+        detail.setdefault("http_status", exc.code)
+        return detail
+
+
+@app.get("/api/risk-control/{strategy}")
+def api_risk_control_status(strategy: str) -> Dict[str, Any]:
+    name = str(strategy or "").strip().lower()
+    try:
+        result = _risk_control_fetch(name, "GET")
+        result["hub_proxy"] = True
+        return result
+    except Exception as exc:
+        return {"status": "error", "strategy": name, "error": f"{type(exc).__name__}: {exc}", "hub_proxy": True}
+
+
+@app.post("/api/risk-control/{strategy}")
+async def api_risk_control_apply(strategy: str, request: Request) -> Response:
+    name = str(strategy or "").strip().lower()
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    body = body if isinstance(body, dict) else {}
+    secret = str(body.pop("control_secret", "") or "")
+    if not secret:
+        return Response(
+            content=json.dumps({"status": "error", "detail": "control_secret is required"}),
+            status_code=400,
+            media_type="application/json",
+        )
+    try:
+        result = _risk_control_fetch(name, "POST", payload=body, secret=secret)
+        # Never echo or retain the supplied secret.
+        status_code = 200 if result.get("status") == "ok" else int(result.get("http_status") or 400)
+        return Response(content=json.dumps(result, default=str), status_code=status_code, media_type="application/json")
+    except Exception as exc:
+        return Response(
+            content=json.dumps({"status": "error", "strategy": name, "error": f"{type(exc).__name__}: {exc}"}),
+            status_code=500,
+            media_type="application/json",
+        )
 
 
 def _rewrite_hub_version(body: bytes, content_type: str) -> bytes:

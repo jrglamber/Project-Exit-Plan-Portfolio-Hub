@@ -1,8 +1,8 @@
-# Project Exit Plan - Portfolio Hub v0.4.1
+# Project Exit Plan - Portfolio Hub v0.5.0
 
 A read-only portfolio cockpit above Indices, Metals and BCO.
 
-## What v0.4.1 shows
+## What v0.5.0 shows
 - Portfolio NAV, open P&L, realised today/week/month/all-time, month total and open-risk estimate.
 - Hub-observed NAV high-water and drawdown.
 - Compact live strategy cards for Indices, Metals and BCO.
@@ -10,13 +10,12 @@ A read-only portfolio cockpit above Indices, Metals and BCO.
 - A single condensed health bar when everything is healthy.
 - A Needs Attention section that only expands when something actually needs review.
 - Recent material activity: basket open/flat/reduction, realised changes, HWM resets, manager/mode changes and feed recovery/failure.
-- Hub-captured hourly realised-P&L performance history for the current month.
 - Compact Research & Challengers summary from the read-only analysis gateway.
-- Monthly Risk Review panel. Approval remains manual-only and never resizes existing positions.
+- Monthly Risk Review / Risk Control panel. Authenticated manual changes apply to NEW trades only and never resize existing positions.
 - Deep accounting, exposure and system-health detail remains available in collapsed sections.
 
 ## Safety / authority
-- Portfolio Hub is read-only.
+- Portfolio Hub is read-only for trading/management actions except the explicit authenticated manual new-trade risk control.
 - No OANDA credentials.
 - No trade placement, close, harvest, stop, sizing or strategy authority.
 - Producer build numbers are informational. Schema compatibility is enforced through the shared portfolio-summary contract.
@@ -46,7 +45,12 @@ If a producer is temporarily practice/demo, it remains visible in its own strate
 - `/health`
 
 ## Notes on history
-The performance chart and NAV drawdown are Hub-observed telemetry. They start collecting when the Hub process starts and are not treated as a substitute for producer accounting. Realised accounting still comes from the producer contracts.
+NAV drawdown is Hub-observed telemetry and starts with the current Hub process. It is not a substitute for producer accounting. Realised accounting still comes from the producer contracts.
 
 ## v0.4.1 maintenance
 - Preserve unavailable/null accounting fields as unavailable in the dashboard instead of rendering them as £0.00.
+
+## v0.5.0
+- Removes the Portfolio performance chart.
+- Adds authenticated manual risk-per-new-trade controls for Indices, XAU LONG live, and BCO.
+- Control secrets are prompted at use time and are not stored by the Hub.
