@@ -1,8 +1,8 @@
-# Project Exit Plan - Portfolio Hub v0.4.0
+# Project Exit Plan - Portfolio Hub v0.4.1
 
 A read-only portfolio cockpit above Indices, Metals and BCO.
 
-## What v0.4.0 shows
+## What v0.4.1 shows
 - Portfolio NAV, open P&L, realised today/week/month/all-time, month total and open-risk estimate.
 - Hub-observed NAV high-water and drawdown.
 - Compact live strategy cards for Indices, Metals and BCO.
@@ -47,3 +47,6 @@ If a producer is temporarily practice/demo, it remains visible in its own strate
 
 ## Notes on history
 The performance chart and NAV drawdown are Hub-observed telemetry. They start collecting when the Hub process starts and are not treated as a substitute for producer accounting. Realised accounting still comes from the producer contracts.
+
+## v0.4.1 maintenance
+- Preserve unavailable/null accounting fields as unavailable in the dashboard instead of rendering them as £0.00.
