@@ -20,4 +20,4 @@ Each producer must expose the shared schema version expected by Portfolio Hub at
 Normal producer releases can move independently as long as that schema remains compatible. Do not pin the Hub to historical producer build numbers.
 
 ## Manual risk-control exception
-Each live producer may expose `GET/POST /control/risk-per-trade`. POST must require the producer control secret, an explicit confirmation token, persist the change, and apply it to NEW trades only. Existing positions must never be resized by this control.
+Each live producer may expose `GET/POST /control/risk-per-trade`. POST must require the producer control secret plus `confirm=APPLY_FIXED_RISK_PCT`, recalculate the cash target from fresh live NAV using the agreed fixed percentage (Indices 0.05%, XAU LONG 0.075%, BCO 0.10%), persist the target, and apply it to NEW trades only. Existing positions must never be resized. Broker minimumTradeSize and existing sizing-overage guardrails remain authoritative.
