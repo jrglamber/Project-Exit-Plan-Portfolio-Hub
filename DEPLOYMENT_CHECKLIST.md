@@ -32,14 +32,14 @@ Open:
 
 Verify:
 
-1. Dashboard reports Portfolio Hub `v0.5.0`.
+1. Dashboard reports Portfolio Hub `v0.6.0`.
 2. Indices, Metals and BCO producer cards all load and report the expected modes.
 3. Live Portfolio includes only producers that are both in the configured live scope and currently report `mode=live`.
 4. NAV is taken from the freshest live producer snapshot and is not summed across shared-account producers.
 5. Accounting totals are live-strategy only.
 6. Needs Attention is empty when sources, signals, schema and broker/database/worker health are normal.
 7. Research & Challengers is read-only and cannot influence execution.
-8. Manual risk control requires the producer control secret, changes NEW trades only, and never resizes existing positions.
+8. Fixed-percent risk control requires the producer control secret, recalculates from fresh live NAV (Indices 0.05%, XAU LONG 0.075%, BCO 0.10%), changes NEW trades only, honours producer minimum-position sizing, and never resizes existing positions.
 9. NAV drawdown is labelled as Hub-observed telemetry and begins with the current Hub process.
 
 ## Safety
