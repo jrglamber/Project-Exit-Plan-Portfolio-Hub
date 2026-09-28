@@ -24,15 +24,25 @@ def financial_review_payload(snapshot):
             'basket_r': basket.get('pnl_r'),
             'open_trades': basket.get('open_trades'),
         }
-    # Canonical live scope: Indices + Metals headline lane (XAU LONG only) + BCO.
-    live = ('indices', 'metals', 'bco')
+    # Use the same live scope as the aggregate snapshot and still require the
+    # producer itself to report mode=live before it contributes to totals.
+    configured_scope = tuple(portfolio.get('scope') or ('indices', 'metals', 'bco'))
+    live = tuple(
+        k for k in configured_scope
+        if k in out['strategies'] and str(out['strategies'][k].get('mode') or '').lower() == 'live'
+    )
     out['live_scope'] = list(live)
     out['overall_balance_gbp'] = portfolio.get('nav_gbp')
+    out['portfolio_nav_high_water_gbp'] = portfolio.get('nav_high_water_gbp')
+    out['portfolio_drawdown_gbp'] = portfolio.get('drawdown_gbp')
+    out['open_risk_estimate_gbp'] = portfolio.get('open_risk_estimate_gbp')
     out['balance_source'] = portfolio.get('nav_source')
     out['balance_source_spread_gbp'] = portfolio.get('nav_spread_gbp')
     out['balance_source_disagreement'] = portfolio.get('nav_disagreement')
+    out['combined_live_realised_today_gbp'] = portfolio.get('realised_today_gbp')
     out['combined_live_realised_week_gbp'] = _sum_present([out['strategies'][k]['realised_week_gbp'] for k in live])
     out['combined_live_realised_month_gbp'] = _sum_present([out['strategies'][k]['realised_month_gbp'] for k in live])
+    out['combined_live_month_total_gbp'] = portfolio.get('month_total_gbp')
     out['combined_live_realised_all_time_gbp'] = _sum_present([out['strategies'][k]['realised_all_time_gbp'] for k in live])
     out['combined_live_unrealised_gbp'] = _sum_present([out['strategies'][k]['unrealised_gbp'] for k in live])
     return out

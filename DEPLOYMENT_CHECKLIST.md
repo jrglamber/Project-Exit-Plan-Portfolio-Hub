@@ -1,91 +1,47 @@
-# Project Exit Plan — Aggregate Dashboard Link-Up
+# Project Exit Plan - Portfolio Hub deployment checklist
 
-## Confirmed source baselines supplied by user
+## Scope
 
-- Indices live runtime: `v10.1.53` in `app_postgres_runtime.py`
-- Metals: `v1.6.32`
-- BCO: `v0.8.8`
+Portfolio Hub is a read-only cockpit above the live Indices, Metals and BCO producers.
 
-The linked cumulative builds in this pack are:
+Producer build numbers are informational only. Compatibility is enforced through the shared `/api/portfolio-summary` schema contract, so normal producer version bumps do not require a Hub code change.
 
-- Indices `v10.1.54`
-- Metals `v1.6.33`
-- BCO `v0.8.9`
-- Aggregate Dashboard `v0.2.0`
-
-No production strategy rule is intentionally changed. The three producer builds add only a read-only `/api/portfolio-summary` adapter plus optional shared-secret authentication.
-
-## Important Indices runtime note
-
-The supplied Indices package contains an older `app.py` and the screenshot-confirmed current live runtime `app_postgres_runtime.py` at `v10.1.53`.
-The patch is applied to `app_postgres_runtime.py` only. The supplied v10.1.54 Procfile has also been aligned to `app_postgres_runtime:app` so the package cannot accidentally boot the legacy `app.py`. If Railway already has a custom start command for the same runtime, keep it. Do not revert the service to legacy `app:app`.
-
-## Deployment order
-
-### 1. Indices
-Deploy `Project-Exit-Plan-v10.1.54.zip` to the existing Indices service.
-
-Verify:
-
-- `/dashboard` shows `v10.1.54`
-- `/health` remains healthy
-- `/api/portfolio-summary` returns `strategy: indices` and `source_build: v10.1.54`
-- existing live top tiles still match the broker
-
-### 2. Metals
-Deploy `Metals-v1.6.33.zip` to the existing Metals service.
-
-Verify:
-
-- `/dashboard` shows `v1.6.33`
-- `/health` remains healthy
-- `/api/portfolio-summary` returns `strategy: metals` and `source_build: v1.6.33`
-- headline values remain XAU LONG live only; XAU SHORT/XAG practice stays excluded
-
-### 3. BCO
-Deploy `BCO-live-v0.8.9.zip` to the existing BCO service.
-
-Verify:
-
-- `/dashboard` shows `0.8.9`
-- `/health` remains healthy
-- `/api/portfolio-summary` returns `strategy: bco`, `source_build: 0.8.9`, and `mode: practice` while still demo/practice
-- BCO execution/safety state is unchanged
-
-### 4. Aggregate service
-Create a new Railway service/repository from `Aggregate-v0.2.0.zip`.
-
-Set these variables to the BASE URLs of the three services:
+## Required service variables
 
 - `INDICES_SERVICE_URL=https://...`
 - `METALS_SERVICE_URL=https://...`
 - `BCO_SERVICE_URL=https://...`
-- `AGGREGATE_LIVE_STRATEGIES=indices,metals`
+- `AGGREGATE_LIVE_STRATEGIES=indices,metals,bco`
 
-Do not add OANDA credentials to the aggregate service.
+Optional:
 
-### 5. Optional but recommended endpoint protection
-Create one random secret and set the same value on all four services:
+- `AGGREGATE_SOURCE_SECRET=<shared read-only summary secret>`
+- lane-note overrides from `env.example`
+- signal-health and NAV-drift thresholds from `env.example`
 
-- `AGGREGATE_SOURCE_SECRET=<same random value>`
+Do not add OANDA credentials to Portfolio Hub.
 
-The aggregate service sends it in `X-Aggregate-Secret`. If the variable is blank, the summary endpoints remain read-only but publicly reachable to anyone who knows the URL.
+## Post-deploy verification
 
-### 6. Aggregate verification
 Open:
 
 - `/dashboard`
 - `/health`
 - `/api/aggregate`
+- `/api/research-summary`
 
-Expected top order:
+Verify:
 
-1. Indices — Broker P&L / High Water / Giveback / Open Trades
-2. Metals — Broker P&L / High Water / Giveback / Open Trades
-3. BCO — Broker P&L / High Water / Giveback / Open Trades
+1. Dashboard reports Portfolio Hub `v0.4.0`.
+2. Indices, Metals and BCO producer cards all load and report the expected modes.
+3. Live Portfolio includes only producers that are both in the configured live scope and currently report `mode=live`.
+4. NAV is taken from the freshest live producer snapshot and is not summed across shared-account producers.
+5. Accounting totals are live-strategy only.
+6. Needs Attention is empty when sources, signals, schema and broker/database/worker health are normal.
+7. Research & Challengers is read-only and cannot influence execution.
+8. Monthly Risk Review remains manual-only and never resizes existing positions.
+9. Performance history and NAV drawdown are labelled as Hub-observed telemetry and begin with the current Hub process.
 
-The Live Portfolio row below them should currently combine Indices + Metals only. BCO remains visible but its practice account NAV/P&L must not contaminate live-money totals.
+## Safety
 
-When BCO is later promoted to real live execution, explicitly change:
-
-`AGGREGATE_LIVE_STRATEGIES=indices,metals,bco`
+Portfolio Hub must remain display/read-only. No order placement, close, stop, harvest, sizing, HWM reset or strategy mutation belongs in this repository.
