@@ -1,6 +1,6 @@
 # Producer endpoint rules
 
-The Portfolio Hub producer endpoints are display/read-only.
+The Portfolio Hub producer summary/research endpoints are display/read-only.
 
 1. Reuse the exact existing functions/state powering each producer's live headline values.
 2. Do not trigger reconciliation, broker repair, harvesting, HWM reset, maintenance or orders from a GET endpoint.
@@ -18,3 +18,6 @@ The Portfolio Hub producer endpoints are display/read-only.
 Each producer must expose the shared schema version expected by Portfolio Hub at `/api/portfolio-summary`.
 
 Normal producer releases can move independently as long as that schema remains compatible. Do not pin the Hub to historical producer build numbers.
+
+## Manual risk-control exception
+Each live producer may expose `GET/POST /control/risk-per-trade`. POST must require the producer control secret, an explicit confirmation token, persist the change, and apply it to NEW trades only. Existing positions must never be resized by this control.
