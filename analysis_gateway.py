@@ -791,7 +791,7 @@ def api_research_summary() -> Dict[str, Any]:
         payload = state.get("data") if isinstance(state.get("data"), dict) else {}
         data = payload.get("data") if isinstance(payload, dict) and isinstance(payload.get("data"), dict) else {}
         items = _dedupe_research_items(_collect_research_items(data))
-        source_data = ((((core_snap.get("sources") or {}).get(name) or {}).get("data")) or {})
+        source_data = (((core_snap.get("sources") or {}).get(name) or {}).get("data") or {})
         exit_mgmt = source_data.get("exit_management") if isinstance(source_data, dict) else {}
         sources[name] = {
             "ok": bool(state.get("ok")),
