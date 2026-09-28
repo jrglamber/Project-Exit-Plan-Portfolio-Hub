@@ -24,8 +24,13 @@ def financial_review_payload(snapshot):
             'basket_r': basket.get('pnl_r'),
             'open_trades': basket.get('open_trades'),
         }
-    # Canonical live scope: Indices + Metals headline lane (XAU LONG only) + BCO.
-    live = ('indices', 'metals', 'bco')
+    # Use the same live scope as the aggregate snapshot and still require the
+    # producer itself to report mode=live before it contributes to totals.
+    configured_scope = tuple(portfolio.get('scope') or ('indices', 'metals', 'bco'))
+    live = tuple(
+        k for k in configured_scope
+        if k in out['strategies'] and str(out['strategies'][k].get('mode') or '').lower() == 'live'
+    )
     out['live_scope'] = list(live)
     out['overall_balance_gbp'] = portfolio.get('nav_gbp')
     out['portfolio_nav_high_water_gbp'] = portfolio.get('nav_high_water_gbp')
