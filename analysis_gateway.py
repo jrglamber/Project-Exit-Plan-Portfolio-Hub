@@ -25,8 +25,8 @@ import app as core
 
 # Stable outer app: explicit wrapper routes take precedence over the unchanged core app.
 app = FastAPI(title="Project Exit Plan — Wrapper")
-ANALYSIS_GATEWAY_VERSION = "1.26.0"
-VISIBLE_HUB_VERSION = "0.3.31"
+ANALYSIS_GATEWAY_VERSION = "1.27.0"
+VISIBLE_HUB_VERSION = "0.4.0"
 ANALYSIS_POLL_SECONDS = max(30, min(int(float(os.getenv("ANALYSIS_POLL_SECONDS", "60"))), 900))
 ANALYSIS_TIMEOUT_SECONDS = max(1.0, min(float(os.getenv("ANALYSIS_TIMEOUT_SECONDS", "8")), 20.0))
 
@@ -677,6 +677,146 @@ def api_analysis() -> Dict[str, Any]:
     }
 
 
+
+_RESEARCH_KEYWORDS = (
+    "challenger", "atr2", "adaptive", "protection", "observer", "ai",
+    "short", "recovery", "exit", "harvest",
+)
+
+
+def _research_scalar(value: Any) -> Any:
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    return None
+
+
+def _research_sample(node: Any) -> Any:
+    if isinstance(node, list):
+        return len(node)
+    if not isinstance(node, dict):
+        return None
+    for key in ("sample", "sample_size", "n", "count", "episodes", "trades", "completed", "rows"):
+        value = node.get(key)
+        if isinstance(value, (int, float)):
+            return value
+        if isinstance(value, list):
+            return len(value)
+    return None
+
+
+def _research_status(node: Any) -> str:
+    if not isinstance(node, dict):
+        return ""
+    for key in ("status", "state", "recommendation", "verdict", "decision", "phase"):
+        value = _research_scalar(node.get(key))
+        if value not in (None, ""):
+            return str(value)
+    return ""
+
+
+def _research_updated(node: Any) -> Any:
+    if not isinstance(node, dict):
+        return None
+    for key in ("last_reviewed_at_utc", "updated_at_utc", "observed_at", "created_at_utc", "time_utc"):
+        if node.get(key):
+            return node.get(key)
+    return None
+
+
+def _collect_research_items(value: Any, path: str = "", depth: int = 0) -> list:
+    if depth > 4:
+        return []
+    out = []
+    if isinstance(value, dict):
+        for key, child in value.items():
+            child_path = (path + "." + str(key)).strip(".")
+            label_key = str(key).lower()
+            relevant = any(word in label_key for word in _RESEARCH_KEYWORDS)
+            if relevant:
+                item = {
+                    "label": str(key).replace("_", " ").strip().upper(),
+                    "path": child_path,
+                    "status": _research_status(child),
+                    "sample": _research_sample(child),
+                    "updated_at_utc": _research_updated(child),
+                }
+                if isinstance(child, (str, int, float, bool)):
+                    item["status"] = str(child)
+                out.append(item)
+            out.extend(_collect_research_items(child, child_path, depth + 1))
+    elif isinstance(value, list) and depth <= 3:
+        for idx, child in enumerate(value[:12]):
+            out.extend(_collect_research_items(child, path + f"[{idx}]", depth + 1))
+    return out
+
+
+def _dedupe_research_items(items: list) -> list:
+    seen = set()
+    out = []
+    for item in items:
+        label = str(item.get("label") or "").strip()
+        if not label:
+            continue
+        key = label.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(item)
+        if len(out) >= 8:
+            break
+    return out
+
+
+def _main_challenger(items: list) -> Dict[str, Any]:
+    priorities = ("atr2", "adaptive", "protection", "challenger", "exit")
+    for priority in priorities:
+        for item in items:
+            if priority in str(item.get("label") or "").lower():
+                return item
+    return items[0] if items else {}
+
+
+@app.get("/api/research-summary")
+def api_research_summary() -> Dict[str, Any]:
+    with _analysis_lock:
+        cache = {k: dict(v) for k, v in _analysis_cache.items()}
+    try:
+        core_snap = core.aggregate_snapshot()
+    except Exception:
+        core_snap = {"sources": {}}
+
+    sources = {}
+    for name in ("indices", "metals", "bco"):
+        state = cache.get(name) or {}
+        payload = state.get("data") if isinstance(state.get("data"), dict) else {}
+        data = payload.get("data") if isinstance(payload, dict) and isinstance(payload.get("data"), dict) else {}
+        items = _dedupe_research_items(_collect_research_items(data))
+        source_data = ((((core_snap.get("sources") or {}).get(name) or {}).get("data")) or {})
+        exit_mgmt = source_data.get("exit_management") if isinstance(source_data, dict) else {}
+        sources[name] = {
+            "ok": bool(state.get("ok")),
+            "status": payload.get("status") if isinstance(payload, dict) else None,
+            "app_version": payload.get("app_version") if isinstance(payload, dict) else None,
+            "analysis_interface_version": payload.get("analysis_interface_version") if isinstance(payload, dict) else None,
+            "current_manager": (exit_mgmt or {}).get("current_manager"),
+            "next_cycle_manager": (exit_mgmt or {}).get("next_cycle_manager"),
+            "main_challenger": _main_challenger(items),
+            "items": items,
+            "checked_at_utc": state.get("checked_at_utc"),
+            "error": state.get("error"),
+            "read_only": True,
+            "execution_authority": False,
+        }
+    return {
+        "status": "ok",
+        "gateway_version": ANALYSIS_GATEWAY_VERSION,
+        "generated_at_utc": _now(),
+        "read_only": True,
+        "execution_authority": False,
+        "sources": sources,
+    }
+
+
 def _rewrite_hub_version(body: bytes, content_type: str) -> bytes:
     if "text/html" not in (content_type or "").lower():
         return body
@@ -685,11 +825,6 @@ def _rewrite_hub_version(body: bytes, content_type: str) -> bytes:
         current = getattr(core, "APP_VERSION", None)
         if current and str(current) != VISIBLE_HUB_VERSION:
             text = text.replace(str(current), VISIBLE_HUB_VERSION)
-        # Core currently returns drawdown_gbp=None unconditionally, so the
-        # dashboard tile is presentation-only and misleading. Hide it until a
-        # real portfolio drawdown series is wired.
-        text = text.replace("grid-template-columns:repeat(5,minmax(0,1fr))", "grid-template-columns:repeat(4,minmax(0,1fr))")
-        text = text.replace(",card('Drawdown',money(p.drawdown_gbp),'Stage 2')", "")
         return text.encode("utf-8")
     except Exception:
         return body
