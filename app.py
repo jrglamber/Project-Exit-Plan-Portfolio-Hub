@@ -277,59 +277,23 @@ def refresh_one(key: str) -> None:
 
 
 def fetch_metals_research_review(limit: int = 250) -> Dict[str, Any]:
-    """Read-only bridge over existing Metals research slices used by reviews."""
+    """Read-only full-history Metals practice performance bridge."""
     base = SOURCES["metals"]["url"]
     if not base:
         return {"status": "error", "error": "metals service URL not configured", "data": {}}
     headers = {"Accept": "application/json", "User-Agent": f"ProjectExitPlanAggregate/{APP_VERSION}"}
     if SOURCE_SECRET:
         headers["X-Aggregate-Secret"] = SOURCE_SECRET
-    bounded = max(1, min(int(limit), 250))
-    combined: Dict[str, Any] = {}
-    errors: Dict[str, str] = {}
-    for slice_name in ("execution", "hwm", "harvest", "exits", "research"):
-        try:
-            req = urllib.request.Request(base + f"/analysis/slice/{slice_name}?limit={bounded}", headers=headers, method="GET")
-            with urllib.request.urlopen(req, timeout=SOURCE_TIMEOUT_SECONDS) as resp:
-                payload = json.loads(resp.read().decode("utf-8"))
-            combined[slice_name] = payload.get("data", {}) if isinstance(payload, dict) else {}
-        except Exception as exc:
-            errors[slice_name] = f"{type(exc).__name__}: {exc}"
-    audit = ((combined.get("execution") or {}).get("metals_demo_execution_audit") or [])
-    lane_summary = {}
-    for asset in ("XAUUSD", "XAGUSD"):
-        for side in ("LONG", "SHORT"):
-            key = asset + "_" + side
-            lane_summary[key] = {"entries": 0, "closes": 0, "realised_gbp": 0.0}
-    entry_lane = {}
-    for row in audit:
-        if row.get("action") == "entry" and row.get("status") == "OPENED":
-            units = safe_float(row.get("actual_units"))
-            if units:
-                side = "LONG" if units > 0 else "SHORT"
-                key = str(row.get("asset") or "").upper() + "_" + side
-                if key in lane_summary:
-                    lane_summary[key]["entries"] += 1
-                    entry_lane[row.get("link_id")] = key
-    for row in audit:
-        if row.get("action") == "manager_close" and row.get("status") == "CLOSED":
-            key = entry_lane.get(row.get("link_id"))
-            if key:
-                try:
-                    raw = json.loads(row.get("raw_json") or "{}")
-                    fill = (((raw.get("response") or {}).get("data") or {}).get("orderFillTransaction") or {})
-                    pl = safe_float(fill.get("pl"))
-                except Exception:
-                    pl = None
-                if pl is not None:
-                    lane_summary[key]["closes"] += 1
-                    lane_summary[key]["realised_gbp"] += pl
-    for item in lane_summary.values():
-        item["realised_gbp"] = round(item["realised_gbp"], 4)
-    return {"status": "ok" if combined else "error", "time_utc": now_iso(),
-            "read_only_interface": True, "execution_authority": False,
-            "sources": ["metals:/analysis/slice/" + x for x in ("execution","hwm","harvest","exits","research")],
-            "errors": errors, "lane_summary": lane_summary, "data": combined}
+    try:
+        req = urllib.request.Request(base + "/analysis/practice-performance", headers=headers, method="GET")
+        with urllib.request.urlopen(req, timeout=SOURCE_TIMEOUT_SECONDS) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+        return {"status": payload.get("status", "ok"), "time_utc": payload.get("time_utc", now_iso()),
+                "read_only_interface": True, "execution_authority": False,
+                "source": "metals:/analysis/practice-performance", "data": payload}
+    except Exception as exc:
+        return {"status": "error", "time_utc": now_iso(), "read_only_interface": True,
+                "execution_authority": False, "error": f"{type(exc).__name__}: {exc}", "data": {}}
 
 
 @app.get("/api/research/metals-practice")
