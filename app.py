@@ -14,7 +14,7 @@ from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 
 APP_NAME = "Project Exit Plan — Portfolio Hub"
-APP_VERSION = "0.6.1"
+APP_VERSION = "0.6.2"
 SCHEMA_VERSION = 1
 
 POLL_SECONDS = max(5, min(int(float(os.getenv("AGGREGATE_POLL_SECONDS", "20"))), 300))
@@ -276,6 +276,38 @@ def refresh_one(key: str) -> None:
             }
 
 
+def fetch_metals_research_review(limit: int = 40) -> Dict[str, Any]:
+    """Read-only bridge for Metals practice/shadow trade data used by reviews."""
+    base = SOURCES["metals"]["url"]
+    if not base:
+        return {"status": "error", "error": "metals service URL not configured"}
+    headers = {"Accept": "application/json", "User-Agent": f"ProjectExitPlanAggregate/{APP_VERSION}"}
+    if SOURCE_SECRET:
+        headers["X-Aggregate-Secret"] = SOURCE_SECRET
+    url = base + f"/analysis/slice/trades?limit={max(1, min(int(limit), 100))}"
+    try:
+        req = urllib.request.Request(url, headers=headers, method="GET")
+        with urllib.request.urlopen(req, timeout=SOURCE_TIMEOUT_SECONDS) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+        data = payload.get("data") if isinstance(payload, dict) else {}
+        return {
+            "status": payload.get("status", "ok") if isinstance(payload, dict) else "ok",
+            "time_utc": payload.get("time_utc") if isinstance(payload, dict) else now_iso(),
+            "read_only_interface": True,
+            "execution_authority": False,
+            "source": "metals:/analysis/slice/trades",
+            "data": data if isinstance(data, dict) else {},
+        }
+    except Exception as exc:
+        return {"status": "error", "time_utc": now_iso(), "read_only_interface": True,
+                "execution_authority": False, "error": f"{type(exc).__name__}: {exc}", "data": {}}
+
+
+@app.get("/api/research/metals-practice")
+def metals_practice_review(limit: int = 40) -> Dict[str, Any]:
+    return fetch_metals_research_review(limit)
+
+
 def refresh_all() -> None:
     with ThreadPoolExecutor(max_workers=3) as pool:
         futures = [pool.submit(refresh_one, k) for k in SOURCES]
@@ -293,6 +325,12 @@ def _worker() -> None:
             print(financial_review_line(aggregate_snapshot()), flush=True)
         except Exception as exc:
             print('PEP_FINANCIAL_REVIEW_ERROR ' + str(exc), flush=True)
+        try:
+            research = fetch_metals_research_review(40)
+            compact = json.dumps(research, separators=(",", ":"), default=str)
+            print("PEP_METALS_RESEARCH_REVIEW " + compact, flush=True)
+        except Exception as exc:
+            print("PEP_METALS_RESEARCH_REVIEW_ERROR " + str(exc), flush=True)
         time.sleep(POLL_SECONDS)
 
 
