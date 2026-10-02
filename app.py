@@ -276,7 +276,7 @@ def refresh_one(key: str) -> None:
             }
 
 
-def fetch_metals_research_review(limit: int = 80) -> Dict[str, Any]:
+def fetch_metals_research_review(limit: int = 250) -> Dict[str, Any]:
     """Read-only bridge over existing Metals research slices used by reviews."""
     base = SOURCES["metals"]["url"]
     if not base:
@@ -333,7 +333,7 @@ def fetch_metals_research_review(limit: int = 80) -> Dict[str, Any]:
 
 
 @app.get("/api/research/metals-practice")
-def metals_practice_review(limit: int = 80) -> Dict[str, Any]:
+def metals_practice_review(limit: int = 250) -> Dict[str, Any]:
     return fetch_metals_research_review(limit)
 
 
@@ -355,7 +355,7 @@ def _worker() -> None:
         except Exception as exc:
             print('PEP_FINANCIAL_REVIEW_ERROR ' + str(exc), flush=True)
         try:
-            research = fetch_metals_research_review(80)
+            research = fetch_metals_research_review(250)
             compact = json.dumps(research, separators=(",", ":"), default=str)
             print("PEP_METALS_RESEARCH_REVIEW " + compact, flush=True)
         except Exception as exc:
