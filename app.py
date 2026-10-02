@@ -295,10 +295,41 @@ def fetch_metals_research_review(limit: int = 80) -> Dict[str, Any]:
             combined[slice_name] = payload.get("data", {}) if isinstance(payload, dict) else {}
         except Exception as exc:
             errors[slice_name] = f"{type(exc).__name__}: {exc}"
+    audit = ((combined.get("execution") or {}).get("metals_demo_execution_audit") or [])
+    lane_summary = {}
+    for asset in ("XAUUSD", "XAGUSD"):
+        for side in ("LONG", "SHORT"):
+            key = asset + "_" + side
+            lane_summary[key] = {"entries": 0, "closes": 0, "realised_gbp": 0.0}
+    entry_lane = {}
+    for row in audit:
+        if row.get("action") == "entry" and row.get("status") == "OPENED":
+            units = safe_float(row.get("actual_units"))
+            if units:
+                side = "LONG" if units > 0 else "SHORT"
+                key = str(row.get("asset") or "").upper() + "_" + side
+                if key in lane_summary:
+                    lane_summary[key]["entries"] += 1
+                    entry_lane[row.get("link_id")] = key
+    for row in audit:
+        if row.get("action") == "manager_close" and row.get("status") == "CLOSED":
+            key = entry_lane.get(row.get("link_id"))
+            if key:
+                try:
+                    raw = json.loads(row.get("raw_json") or "{}")
+                    fill = (((raw.get("response") or {}).get("data") or {}).get("orderFillTransaction") or {})
+                    pl = safe_float(fill.get("pl"))
+                except Exception:
+                    pl = None
+                if pl is not None:
+                    lane_summary[key]["closes"] += 1
+                    lane_summary[key]["realised_gbp"] += pl
+    for item in lane_summary.values():
+        item["realised_gbp"] = round(item["realised_gbp"], 4)
     return {"status": "ok" if combined else "error", "time_utc": now_iso(),
             "read_only_interface": True, "execution_authority": False,
             "sources": ["metals:/analysis/slice/" + x for x in ("execution","hwm","harvest","exits","research")],
-            "errors": errors, "data": combined}
+            "errors": errors, "lane_summary": lane_summary, "data": combined}
 
 
 @app.get("/api/research/metals-practice")
