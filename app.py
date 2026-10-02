@@ -14,7 +14,7 @@ from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 
 APP_NAME = "Project Exit Plan — Portfolio Hub"
-APP_VERSION = "0.6.2"
+APP_VERSION = "0.6.3"
 SCHEMA_VERSION = 1
 
 POLL_SECONDS = max(5, min(int(float(os.getenv("AGGREGATE_POLL_SECONDS", "20"))), 300))
@@ -276,35 +276,33 @@ def refresh_one(key: str) -> None:
             }
 
 
-def fetch_metals_research_review(limit: int = 40) -> Dict[str, Any]:
-    """Read-only bridge for Metals practice/shadow trade data used by reviews."""
+def fetch_metals_research_review(limit: int = 80) -> Dict[str, Any]:
+    """Read-only bridge over existing Metals research slices used by reviews."""
     base = SOURCES["metals"]["url"]
     if not base:
-        return {"status": "error", "error": "metals service URL not configured"}
+        return {"status": "error", "error": "metals service URL not configured", "data": {}}
     headers = {"Accept": "application/json", "User-Agent": f"ProjectExitPlanAggregate/{APP_VERSION}"}
     if SOURCE_SECRET:
         headers["X-Aggregate-Secret"] = SOURCE_SECRET
-    url = base + f"/analysis/slice/trades?limit={max(1, min(int(limit), 100))}"
-    try:
-        req = urllib.request.Request(url, headers=headers, method="GET")
-        with urllib.request.urlopen(req, timeout=SOURCE_TIMEOUT_SECONDS) as resp:
-            payload = json.loads(resp.read().decode("utf-8"))
-        data = payload.get("data") if isinstance(payload, dict) else {}
-        return {
-            "status": payload.get("status", "ok") if isinstance(payload, dict) else "ok",
-            "time_utc": payload.get("time_utc") if isinstance(payload, dict) else now_iso(),
-            "read_only_interface": True,
-            "execution_authority": False,
-            "source": "metals:/analysis/slice/trades",
-            "data": data if isinstance(data, dict) else {},
-        }
-    except Exception as exc:
-        return {"status": "error", "time_utc": now_iso(), "read_only_interface": True,
-                "execution_authority": False, "error": f"{type(exc).__name__}: {exc}", "data": {}}
+    bounded = max(1, min(int(limit), 250))
+    combined: Dict[str, Any] = {}
+    errors: Dict[str, str] = {}
+    for slice_name in ("execution", "hwm", "harvest", "exits", "research"):
+        try:
+            req = urllib.request.Request(base + f"/analysis/slice/{slice_name}?limit={bounded}", headers=headers, method="GET")
+            with urllib.request.urlopen(req, timeout=SOURCE_TIMEOUT_SECONDS) as resp:
+                payload = json.loads(resp.read().decode("utf-8"))
+            combined[slice_name] = payload.get("data", {}) if isinstance(payload, dict) else {}
+        except Exception as exc:
+            errors[slice_name] = f"{type(exc).__name__}: {exc}"
+    return {"status": "ok" if combined else "error", "time_utc": now_iso(),
+            "read_only_interface": True, "execution_authority": False,
+            "sources": ["metals:/analysis/slice/" + x for x in ("execution","hwm","harvest","exits","research")],
+            "errors": errors, "data": combined}
 
 
 @app.get("/api/research/metals-practice")
-def metals_practice_review(limit: int = 40) -> Dict[str, Any]:
+def metals_practice_review(limit: int = 80) -> Dict[str, Any]:
     return fetch_metals_research_review(limit)
 
 
@@ -326,7 +324,7 @@ def _worker() -> None:
         except Exception as exc:
             print('PEP_FINANCIAL_REVIEW_ERROR ' + str(exc), flush=True)
         try:
-            research = fetch_metals_research_review(40)
+            research = fetch_metals_research_review(80)
             compact = json.dumps(research, separators=(",", ":"), default=str)
             print("PEP_METALS_RESEARCH_REVIEW " + compact, flush=True)
         except Exception as exc:
