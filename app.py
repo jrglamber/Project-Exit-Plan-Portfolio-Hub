@@ -304,6 +304,16 @@ def metals_practice_sample() -> Dict[str, Any]:
         with urllib.request.urlopen(req,timeout=SOURCE_TIMEOUT_SECONDS) as resp: return json.loads(resp.read().decode("utf-8"))
     except Exception as exc: return {"status":"error","error":f"{type(exc).__name__}: {exc}"}
 
+def metals_history_probe() -> Dict[str, Any]:
+    base = SOURCES["metals"]["url"]
+    headers = {"Accept":"application/json","User-Agent":f"ProjectExitPlanAggregate/{APP_VERSION}"}
+    req = urllib.request.Request(base+"/analysis/practice-history-sample",headers=headers,method="GET")
+    try:
+        with urllib.request.urlopen(req,timeout=SOURCE_TIMEOUT_SECONDS) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except Exception as exc:
+        return {"status":"error","error":str(exc)}
+
 @app.get("/api/research/metals-practice-schema")
 def metals_practice_schema() -> Dict[str, Any]:
     base = SOURCES["metals"]["url"]
@@ -344,6 +354,7 @@ def _worker() -> None:
             print("PEP_METALS_RESEARCH_REVIEW " + compact, flush=True)
             print("PEP_METALS_ACCOUNTING_SCHEMA " + json.dumps(metals_practice_schema(), separators=(",", ":"), default=str), flush=True)
             print("PEP_METALS_ACCOUNTING_SAMPLE " + json.dumps(metals_practice_sample(), separators=(",", ":"), default=str), flush=True)
+            print("PEP_METALS_HISTORY_SAMPLE " + json.dumps(metals_history_probe(), separators=(",", ":"), default=str), flush=True)
         except Exception as exc:
             print("PEP_METALS_RESEARCH_REVIEW_ERROR " + str(exc), flush=True)
         time.sleep(POLL_SECONDS)
