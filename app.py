@@ -298,7 +298,7 @@ def fetch_metals_research_review(limit: int = 250) -> Dict[str, Any]:
 
 def fetch_short_research_review(key: str) -> Dict[str, Any]:
     """Read-only SHORT promotion evidence from existing prospective research."""
-    path = "/index-directional-intelligence" if key == "indices" else "/bco-directional-intelligence"
+    path = "/index-directional-intelligence" if key == "indices" else "/analysis/short-lane-performance"
     base = SOURCES[key]["url"]
     headers={"Accept":"application/json","User-Agent":f"ProjectExitPlanAggregate/{APP_VERSION}"}
     if SOURCE_SECRET: headers["X-Aggregate-Secret"]=SOURCE_SECRET
@@ -306,7 +306,7 @@ def fetch_short_research_review(key: str) -> Dict[str, Any]:
         req=urllib.request.Request(base+path,headers=headers,method="GET")
         with urllib.request.urlopen(req,timeout=SOURCE_TIMEOUT_SECONDS) as resp:
             payload=json.loads(resp.read().decode("utf-8"))
-        shorts=[g for g in (payload.get("groups") or []) if str(g.get("direction") or "").upper()=="SHORT"]
+        shorts = ([payload] if key == "bco" and payload.get("lane") == "SHORT" else [g for g in (payload.get("groups") or []) if str(g.get("direction") or "").upper()=="SHORT"])
         return {"status":"ok","time_utc":payload.get("time_utc",now_iso()),"read_only_interface":True,
                 "execution_authority":False,"accounting_basis":payload.get("accounting_basis"),
                 "source":key+":"+path,"short_lanes":shorts}
