@@ -296,6 +296,18 @@ def fetch_metals_research_review(limit: int = 250) -> Dict[str, Any]:
                 "execution_authority": False, "error": f"{type(exc).__name__}: {exc}", "data": {}}
 
 
+@app.get("/api/research/metals-practice-schema")
+def metals_practice_schema() -> Dict[str, Any]:
+    base = SOURCES["metals"]["url"]
+    headers = {"Accept":"application/json","User-Agent":f"ProjectExitPlanAggregate/{APP_VERSION}"}
+    if SOURCE_SECRET: headers["X-Aggregate-Secret"] = SOURCE_SECRET
+    try:
+        req=urllib.request.Request(base+"/analysis/practice-accounting-schema",headers=headers,method="GET")
+        with urllib.request.urlopen(req,timeout=SOURCE_TIMEOUT_SECONDS) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except Exception as exc:
+        return {"status":"error","error":f"{type(exc).__name__}: {exc}"}
+
 @app.get("/api/research/metals-practice")
 def metals_practice_review(limit: int = 250) -> Dict[str, Any]:
     return fetch_metals_research_review(limit)
