@@ -334,6 +334,7 @@ def _worker() -> None:
             research = fetch_metals_research_review(250)
             compact = json.dumps(research, separators=(",", ":"), default=str)
             print("PEP_METALS_RESEARCH_REVIEW " + compact, flush=True)
+            print("PEP_METALS_ACCOUNTING_SCHEMA " + json.dumps(metals_practice_schema(), separators=(",", ":"), default=str), flush=True)
         except Exception as exc:
             print("PEP_METALS_RESEARCH_REVIEW_ERROR " + str(exc), flush=True)
         time.sleep(POLL_SECONDS)
