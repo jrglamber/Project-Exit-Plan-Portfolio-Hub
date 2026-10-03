@@ -296,6 +296,29 @@ def fetch_metals_research_review(limit: int = 250) -> Dict[str, Any]:
                 "execution_authority": False, "error": f"{type(exc).__name__}: {exc}", "data": {}}
 
 
+def fetch_short_research_review(key: str) -> Dict[str, Any]:
+    """Read-only SHORT promotion evidence from existing prospective research."""
+    path = "/index-directional-intelligence" if key == "indices" else "/bco-directional-intelligence"
+    base = SOURCES[key]["url"]
+    headers={"Accept":"application/json","User-Agent":f"ProjectExitPlanAggregate/{APP_VERSION}"}
+    if SOURCE_SECRET: headers["X-Aggregate-Secret"]=SOURCE_SECRET
+    try:
+        req=urllib.request.Request(base+path,headers=headers,method="GET")
+        with urllib.request.urlopen(req,timeout=SOURCE_TIMEOUT_SECONDS) as resp:
+            payload=json.loads(resp.read().decode("utf-8"))
+        shorts=[g for g in (payload.get("groups") or []) if str(g.get("direction") or "").upper()=="SHORT"]
+        return {"status":"ok","time_utc":payload.get("time_utc",now_iso()),"read_only_interface":True,
+                "execution_authority":False,"accounting_basis":payload.get("accounting_basis"),
+                "source":key+":"+path,"short_lanes":shorts}
+    except Exception as exc:
+        return {"status":"error","time_utc":now_iso(),"read_only_interface":True,
+                "execution_authority":False,"error":f"{type(exc).__name__}: {exc}","short_lanes":[]}
+
+@app.get("/api/research/short-lanes")
+def short_lane_review() -> Dict[str, Any]:
+    return {"indices":fetch_short_research_review("indices"),"bco":fetch_short_research_review("bco"),
+            "metals":fetch_metals_research_review(250)}
+
 def metals_practice_sample() -> Dict[str, Any]:
     base=SOURCES["metals"]["url"]; headers={"Accept":"application/json","User-Agent":f"ProjectExitPlanAggregate/{APP_VERSION}"}
     if SOURCE_SECRET: headers["X-Aggregate-Secret"]=SOURCE_SECRET
@@ -354,6 +377,11 @@ def _worker() -> None:
             print("PEP_METALS_RESEARCH_REVIEW " + compact, flush=True)
         except Exception as exc:
             print("PEP_METALS_RESEARCH_REVIEW_ERROR " + str(exc), flush=True)
+        try:
+            shorts={"indices":fetch_short_research_review("indices"),"bco":fetch_short_research_review("bco")}
+            print("PEP_SHORT_LANES_REVIEW "+json.dumps(shorts,separators=(",",":"),default=str),flush=True)
+        except Exception as exc:
+            print("PEP_SHORT_LANES_REVIEW_ERROR "+str(exc),flush=True)
         time.sleep(POLL_SECONDS)
 
 
