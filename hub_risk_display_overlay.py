@@ -27,7 +27,7 @@ import analysis_gateway as gateway
 
 BASE_RISK_PCT = 0.10
 OVERFLOW_AVERAGE_RISK_PCT = 0.05
-POLICY_VERSION = "hub_metals_adaptive_risk_0p100_v4_2026_10_14"
+POLICY_VERSION = "hub_metals_adaptive_risk_0p100_v5_2026_10_14"
 
 # Presentation/planning policy. The producer is still authoritative for the
 # persisted GBP risk amount applied to subsequent live broker entries.
@@ -38,9 +38,26 @@ gateway.core.STRATEGY_LANE_NOTES["metals"] = (
     "harvest 30/80/130R+"
 )
 # Visible Hub version only; producer contract/schema is unchanged.
-gateway.core.APP_VERSION = "0.6.7"
+gateway.core.APP_VERSION = "0.6.8"
 
 app = FastAPI(title="Project Exit Plan — Portfolio Hub Risk Overlay")
+
+
+@app.on_event("startup")
+async def start_wrapped_gateway() -> None:
+    """Forward lifecycle into the mounted analysis gateway and core Hub.
+
+    A mounted FastAPI sub-application does not reliably receive its own startup
+    lifecycle from the outer app. Without this explicit forwarding, neither the
+    core portfolio-summary poller nor the analysis/research poller starts, which
+    leaves the aggregate cache empty even though all producers are healthy.
+    """
+    await gateway.app.router.startup()
+
+
+@app.on_event("shutdown")
+async def stop_wrapped_gateway() -> None:
+    await gateway.app.router.shutdown()
 
 
 def _core_root_endpoint() -> Any:
@@ -113,6 +130,7 @@ async def dashboard() -> HTMLResponse:
         raw = str(result)
         status_code = 200
 
+    raw = raw.replace("v0.6.1 &middot; portfolio cockpit", "v0.6.8 &middot; portfolio cockpit", 1)
     raw = raw.replace("XAU LONG live", "XAU LONG + SHORT live")
     raw = raw.replace(
         "Agreed fixed percentages · button recalculates from fresh live NAV · NEW trades only",
@@ -121,6 +139,10 @@ async def dashboard() -> HTMLResponse:
     raw = raw.replace(
         "If broker minimum size implies more cash risk than the target, the producer keeps the minimum-size execution rule and records the effective risk.",
         "If broker minimum size implies more cash risk than the target, the producer keeps the minimum-size execution rule and records the effective risk. Metals post-32 half exposure is broker-safe: while a true half-size ticket is below minimum, every other otherwise-qualified overflow opportunity is taken at the normal valid size.",
+    )
+    raw = raw.replace(
+        "s.ok&&!s.stale&&s.contract_match!==false?'OK':s.contract_match===false?'SCHEMA MISMATCH':s.stale?'STALE':'DEGRADED'",
+        "!s.data?'UNAVAILABLE':s.ok&&!s.stale&&s.contract_match!==false?'OK':s.contract_match===false?'SCHEMA MISMATCH':s.stale?'STALE':'DEGRADED'",
     )
 
     risk_marker = '<div class="section-title">Monthly Risk Review / Fixed % Risk</div><div id="riskReview" class="panel"></div>'
