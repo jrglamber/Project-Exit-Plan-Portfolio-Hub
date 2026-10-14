@@ -2,10 +2,13 @@
 
 Approved 2026-10-14 live-XAU policy:
 - base risk target 0.100% NAV for normal new XAU entries;
-- adaptive entries after campaign trade #32 are half-size (0.050% NAV target);
+- after campaign trade #32 the target is ~0.050% NAV average incremental exposure;
+- while OANDA's XAU minimum size prevents a true half-size ticket, the producer
+  implements that target by taking every other otherwise-qualified overflow
+  opportunity at the normal valid broker size;
 - XAU LONG and XAU SHORT are both live lanes;
 - adaptive stacking: first 20 normal, 21+ requires >= +2R campaign funding,
-  no strategic hard cap, half-size after #32;
+  no strategic hard cap;
 - live-XAU harvest ladder: 30R, 80R, 130R, then +50R, banking 20/20/25%+;
 - existing positions are never resized by the monthly risk button.
 
@@ -23,18 +26,19 @@ from fastapi.responses import HTMLResponse, Response
 import analysis_gateway as gateway
 
 BASE_RISK_PCT = 0.10
-OVERFLOW_RISK_PCT = 0.05
-POLICY_VERSION = "hub_metals_adaptive_risk_0p100_v1_2026_10_14"
+OVERFLOW_AVERAGE_RISK_PCT = 0.05
+POLICY_VERSION = "hub_metals_adaptive_risk_0p100_v2_2026_10_14"
 
 # Presentation/planning policy. The producer is still authoritative for the
 # persisted GBP risk amount applied to subsequent live broker entries.
 gateway.core.FIXED_RISK_PCT_OF_NAV["metals"] = BASE_RISK_PCT
 gateway.core.STRATEGY_LANE_NOTES["metals"] = (
     "XAU LONG + SHORT live · adaptive stack: first 20 normal, 21+ needs +2R campaign funding, "
-    "half-size after #32 · harvest 30/80/130R+"
+    "post-32 half average exposure (broker-safe alternating overflow while minimum size binds) · "
+    "harvest 30/80/130R+"
 )
 # Visible Hub version only; producer contract/schema is unchanged.
-gateway.core.APP_VERSION = "0.6.4"
+gateway.core.APP_VERSION = "0.6.5"
 
 app = FastAPI(title="Project Exit Plan — Portfolio Hub Risk Overlay")
 
@@ -69,11 +73,11 @@ async def dashboard() -> HTMLResponse:
     raw = raw.replace("XAU LONG live", "XAU LONG + SHORT live")
     raw = raw.replace(
         "Agreed fixed percentages · button recalculates from fresh live NAV · NEW trades only",
-        "Agreed base-risk percentages · Metals uses 0.100% normally and 0.050% after campaign trade #32 · button recalculates from fresh live NAV · NEW trades only",
+        "Agreed base-risk percentages · Metals base target 0.100%; post-32 target is ~0.050% average incremental exposure · button recalculates from fresh live NAV · NEW trades only",
     )
     raw = raw.replace(
         "If broker minimum size implies more cash risk than the target, the producer keeps the minimum-size execution rule and records the effective risk.",
-        "If broker minimum size implies more cash risk than the target, the producer keeps the minimum-size execution rule and records the effective risk. Metals adaptive overflow entries after #32 are half the displayed base target.",
+        "If broker minimum size implies more cash risk than the target, the producer keeps the minimum-size execution rule and records the effective risk. Metals post-32 half exposure is broker-safe: while a true half-size ticket is below minimum, every other otherwise-qualified overflow opportunity is taken at the normal valid size.",
     )
     return HTMLResponse(content=raw, status_code=status_code)
 
@@ -86,7 +90,8 @@ def hub_risk_policy() -> dict:
         "metals": {
             "live_lanes": ["XAU_LONG", "XAU_SHORT"],
             "base_risk_pct_of_nav": BASE_RISK_PCT,
-            "overflow_after_trade_32_pct_of_nav": OVERFLOW_RISK_PCT,
+            "overflow_after_trade_32_average_risk_pct_of_nav": OVERFLOW_AVERAGE_RISK_PCT,
+            "overflow_execution_mode_while_broker_minimum_binds": "EVERY_OTHER_QUALIFIED_OVERFLOW_AT_NORMAL_VALID_SIZE",
             "normal_allowance": 20,
             "overflow_min_campaign_r": 2.0,
             "strategic_hard_cap": None,
@@ -98,6 +103,5 @@ def hub_risk_policy() -> dict:
     }
 
 # Everything else, including authenticated /api/risk-control/{strategy}, is
-# delegated unchanged to the analysis gateway. This removes the temporary
-# Metals-only 409 block now that the producer target is being promoted to 0.100%.
+# delegated unchanged to the analysis gateway.
 app.mount("/", gateway.app)
