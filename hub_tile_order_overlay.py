@@ -1,10 +1,11 @@
-"""Portfolio Hub v0.6.14 — portfolio headline tile layout cleanup.
+"""Portfolio Hub v0.6.15 — exact portfolio headline row layout.
 
 Presentation-only overlay:
-- Open P&L and If all stops hit are adjacent at the top.
-- Observed drawdown is removed from the headline tiles.
-- Today / Week / Month / All-time realised tiles are grouped after the live-state tiles.
-- Month is realised-only (not realised + open P&L).
+- Row 1: Portfolio NAV, full width.
+- Row 2: Open P&L | If all stops hit.
+- Row 3: Today realised | Week realised.
+- Row 4: Month realised | All-time realised.
+- Observed drawdown remains removed.
 
 No producer, strategy, execution, sizing, stop, or accounting logic is changed.
 """
@@ -20,15 +21,17 @@ import hub_stop_floor_overlay as base
 
 app = base.app
 core = base.core
-HUB_VERSION = "0.6.14"
-POLICY_VERSION = "hub_portfolio_tile_order_v1_2026_10_15"
+HUB_VERSION = "0.6.15"
+POLICY_VERSION = "hub_portfolio_tile_rows_v2_2026_10_15"
 core.APP_VERSION = HUB_VERSION
 
 
 def _sync_html(text: str) -> str:
     out = str(text)
-    out = out.replace("v0.6.13 &middot; portfolio cockpit", "v0.6.14 &middot; portfolio cockpit")
-    out = out.replace("v0.6.13 · portfolio cockpit", "v0.6.14 · portfolio cockpit")
+    out = out.replace("v0.6.14 &middot; portfolio cockpit", "v0.6.15 &middot; portfolio cockpit")
+    out = out.replace("v0.6.14 · portfolio cockpit", "v0.6.15 · portfolio cockpit")
+    out = out.replace("v0.6.13 &middot; portfolio cockpit", "v0.6.15 &middot; portfolio cockpit")
+    out = out.replace("v0.6.13 · portfolio cockpit", "v0.6.15 · portfolio cockpit")
 
     stop_floor_card = (
         "card((p.live_stop_floor_complete?'If all stops hit':"
@@ -40,9 +43,6 @@ def _sync_html(text: str) -> str:
         "('Telemetry unavailable: '+((p.live_risk_endpoint_failures||[]).join(', ')||'producer error'))))"
     )
 
-    # Current-state tiles first; realised-history tiles last.  Replacing the
-    # whole headline assignment makes the ordering independent of earlier
-    # presentation overlays while leaving the API/data contract untouched.
     desired = (
         "document.getElementById('headline').innerHTML=["
         "card('Portfolio NAV',money(p.nav_gbp),'Freshest '+(NAMES[p.nav_source]||p.nav_source||'source'))," 
@@ -59,6 +59,19 @@ def _sync_html(text: str) -> str:
     out, count = re.subn(pattern, desired, out, count=1)
     if count != 1:
         raise RuntimeError(f"Portfolio headline tile assignment replacement count={count}")
+
+    # Exact row geometry requested by the user. Keep the portfolio headline a
+    # two-column grid at every viewport width, with NAV spanning both columns.
+    # This intentionally overrides the base four-column desktop rule as well as
+    # the existing mobile breakpoint so row pairing is deterministic.
+    layout_css = (
+        "\n<style id=\"portfolio-headline-row-layout\">"
+        "#headline.headline{grid-template-columns:repeat(2,minmax(0,1fr))!important;}"
+        "#headline.headline>.card:first-child{grid-column:1/-1;}"
+        "</style>\n"
+    )
+    if "portfolio-headline-row-layout" not in out:
+        out = out.replace("</head>", layout_css + "</head>", 1)
     return out
 
 
