@@ -1,8 +1,11 @@
-"""Portfolio Hub v0.6.17 — live-XAU-only Metals Candidate Support.
+"""Portfolio Hub v0.6.18 — consolidate Metals live trade status.
 
-Presentation/read-only bridge. The Hub consumes the Metals producer's
-/api/live-xau-candidate-support endpoint so both dashboards use one definition:
-1/1 LONG, 1/1 SHORT, or 0/1 NONE. XAG demo/research is excluded.
+Presentation/read-only bridge:
+- removes the separate Metals Candidate Support tile;
+- enriches the existing Metals Open Trades tile with LONG/SHORT counts and
+  last-opened UK date/time;
+- reads only the Metals live-XAU telemetry endpoint;
+- XAG demo/research remains excluded.
 """
 from __future__ import annotations
 
@@ -17,12 +20,12 @@ import hub_tile_order_overlay as base
 
 app = base.app
 core = base.core
-HUB_VERSION = "0.6.17"
-POLICY_VERSION = "hub_metals_live_xau_candidate_support_v1_2026_10_16"
+HUB_VERSION = "0.6.18"
+POLICY_VERSION = "hub_metals_open_trade_tile_v2_2026_10_16"
 core.APP_VERSION = HUB_VERSION
 
 
-def _fetch_metals_candidate_support() -> Dict[str, Any]:
+def _fetch_metals_trade_tile() -> Dict[str, Any]:
     metals = (core.SOURCES.get("metals") or {}).get("url", "").strip().rstrip("/")
     if not metals:
         return {"ok": False, "error": "Metals service URL not configured"}
@@ -34,7 +37,7 @@ def _fetch_metals_candidate_support() -> Dict[str, Any]:
     if secret:
         headers["X-Aggregate-Secret"] = secret
     req = urllib.request.Request(
-        metals + "/api/live-xau-candidate-support",
+        metals + "/api/live-xau-trade-tile",
         headers=headers,
         method="GET",
     )
@@ -44,36 +47,34 @@ def _fetch_metals_candidate_support() -> Dict[str, Any]:
         if int(getattr(resp, "status", 200)) != 200:
             raise RuntimeError(f"HTTP {getattr(resp, 'status', 'error')}")
     if not isinstance(payload, dict):
-        raise ValueError("Metals candidate support payload is not an object")
+        raise ValueError("Metals live trade tile payload is not an object")
     return payload
 
 
-@app.get("/api/metals-live-candidate-support")
-def metals_live_candidate_support() -> Dict[str, Any]:
+@app.get("/api/metals-live-trade-tile")
+def metals_live_trade_tile() -> Dict[str, Any]:
     try:
-        payload = _fetch_metals_candidate_support()
+        payload = _fetch_metals_trade_tile()
         return {
             "ok": bool(payload.get("ok", True)),
-            "source": "metals:/api/live-xau-candidate-support",
+            "source": "metals:/api/live-xau-trade-tile",
             "scope": "LIVE_XAU_ONLY",
-            "supported": int(payload.get("supported") or 0),
-            "expected": 1,
-            "side": str(payload.get("side") or "NONE").upper(),
-            "display": str(payload.get("display") or "0/1 · NONE"),
-            "latest": payload.get("latest") or {},
+            "open_count": int(payload.get("open_count") or 0),
+            "long_count": int(payload.get("long_count") or 0),
+            "short_count": int(payload.get("short_count") or 0),
+            "last_opened_at_utc": payload.get("last_opened_at_utc"),
             "demo_research_excluded": ["XAGUSD"],
             "strategy_changed": False,
         }
     except Exception as exc:
         return {
             "ok": False,
-            "source": "metals:/api/live-xau-candidate-support",
+            "source": "metals:/api/live-xau-trade-tile",
             "scope": "LIVE_XAU_ONLY",
-            "supported": 0,
-            "expected": 1,
-            "side": "UNKNOWN",
-            "display": "—/1 · UNKNOWN",
-            "latest": {},
+            "open_count": None,
+            "long_count": None,
+            "short_count": None,
+            "last_opened_at_utc": None,
             "demo_research_excluded": ["XAGUSD"],
             "strategy_changed": False,
             "error": f"{type(exc).__name__}: {exc}",
@@ -81,51 +82,63 @@ def metals_live_candidate_support() -> Dict[str, Any]:
 
 
 _WIDGET = r'''
-<script id="hub-metals-live-xau-candidate-support">
+<script id="hub-metals-open-trades-detail">
 (function(){
+  var latest=null;
   function findMetals(){
     return Array.from(document.querySelectorAll('.strategy')).find(function(el){
       var t=el.querySelector('.strategy-title');
       return t && String(t.textContent||'').trim().toLowerCase()==='metals';
     }) || null;
   }
-  function ensureCard(){
+  function removeCandidateSupport(){
+    var old=document.getElementById('metals-live-candidate-support-card');
+    if(old)old.remove();
+    var section=findMetals(); if(!section)return;
+    Array.from(section.querySelectorAll('.card')).forEach(function(card){
+      var label=card.querySelector('.label');
+      if(label && String(label.textContent||'').trim().toLowerCase()==='candidate support')card.remove();
+    });
+  }
+  function findOpenTradesCard(){
     var section=findMetals(); if(!section)return null;
-    var grid=section.querySelector('.grid.cards')||section.querySelector('.cards'); if(!grid)return null;
-    var card=document.getElementById('metals-live-candidate-support-card');
-    if(!card){
-      card=document.createElement('div');
-      card.className='card';
-      card.id='metals-live-candidate-support-card';
-      card.innerHTML='<div class="label">Candidate Support</div><div class="value" id="metals-live-candidate-support-value">—/1 · UNKNOWN</div><div class="small" id="metals-live-candidate-support-note">LIVE XAU only · LONG or SHORT · XAG research excluded</div>';
-      grid.appendChild(card);
-    }
-    return card;
+    return Array.from(section.querySelectorAll('.card')).find(function(card){
+      var label=card.querySelector('.label');
+      return label && String(label.textContent||'').trim().toLowerCase()==='open trades';
+    }) || null;
+  }
+  function whenUK(v){
+    if(!v)return '-';
+    try{
+      return new Intl.DateTimeFormat('en-GB',{
+        timeZone:'Europe/London',day:'2-digit',month:'short',year:'numeric',
+        hour:'2-digit',minute:'2-digit',hour12:false
+      }).format(new Date(v));
+    }catch(e){return String(v);}
   }
   function paint(x){
-    var card=ensureCard(); if(!card)return;
-    var value=card.querySelector('#metals-live-candidate-support-value');
-    var note=card.querySelector('#metals-live-candidate-support-note');
-    if(value){
-      value.textContent=(x&&x.display)||'—/1 · UNKNOWN';
-      value.className='value '+((x&&x.ok&&Number(x.supported||0)>0)?'green':((x&&x.ok)?'':'amber'));
-    }
-    if(note){
-      var candle=x&&x.latest&&x.latest.candle ? ' · candle '+x.latest.candle : '';
-      note.textContent=(x&&x.ok?'LIVE XAU only · current candidate':'LIVE XAU candidate telemetry unavailable')+candle+' · XAG research excluded';
+    latest=x||latest;
+    removeCandidateSupport();
+    var card=findOpenTradesCard(); if(!card || !latest)return;
+    var value=card.querySelector('.value');
+    var note=card.querySelector('.small');
+    if(latest.ok){
+      if(value)value.textContent=String(latest.open_count||0);
+      if(note)note.textContent=String(latest.long_count||0)+' LONG · '+String(latest.short_count||0)+' SHORT · Last opened '+whenUK(latest.last_opened_at_utc);
+    }else{
+      if(note)note.textContent='LIVE XAU trade detail unavailable';
     }
   }
   async function refresh(){
-    ensureCard();
+    removeCandidateSupport();
     try{
-      var r=await fetch('/api/metals-live-candidate-support',{cache:'no-store'});
+      var r=await fetch('/api/metals-live-trade-tile',{cache:'no-store'});
       var x=await r.json(); paint(x);
-    }catch(e){paint({ok:false,display:'—/1 · UNKNOWN'});}
+    }catch(e){paint({ok:false});}
   }
-  var observer=new MutationObserver(function(){ensureCard();});
-  if(document.body)observer.observe(document.body,{childList:true,subtree:true});
-  else document.addEventListener('DOMContentLoaded',function(){observer.observe(document.body,{childList:true,subtree:true});refresh();});
-  refresh(); setInterval(refresh,15000);
+  var observer=new MutationObserver(function(){removeCandidateSupport();if(latest)paint(latest);});
+  function start(){observer.observe(document.body,{childList:true,subtree:true});refresh();setInterval(refresh,15000);}
+  if(document.body)start(); else document.addEventListener('DOMContentLoaded',start);
 })();
 </script>
 '''
@@ -133,9 +146,10 @@ _WIDGET = r'''
 
 def _sync_html(text: str) -> str:
     out = str(text)
-    out = out.replace("v0.6.16 &middot; portfolio cockpit", "v0.6.17 &middot; portfolio cockpit")
-    out = out.replace("v0.6.16 · portfolio cockpit", "v0.6.17 · portfolio cockpit")
-    if "hub-metals-live-xau-candidate-support" not in out:
+    for old in ("0.6.17", "0.6.16"):
+        out = out.replace(f"v{old} &middot; portfolio cockpit", f"v{HUB_VERSION} &middot; portfolio cockpit")
+        out = out.replace(f"v{old} · portfolio cockpit", f"v{HUB_VERSION} · portfolio cockpit")
+    if "hub-metals-open-trades-detail" not in out:
         out = out.replace("</body>", _WIDGET + "\n</body>", 1) if "</body>" in out else out + _WIDGET
     return out
 
@@ -152,7 +166,7 @@ def _install_root_wrapper() -> Dict[str, Any]:
     if not callable(original):
         raise RuntimeError("Portfolio Hub root endpoint not callable")
 
-    async def candidate_support_root(*args: Any, **kwargs: Any):
+    async def live_trade_root(*args: Any, **kwargs: Any):
         result = original(*args, **kwargs)
         if inspect.isawaitable(result):
             result = await result
@@ -167,14 +181,20 @@ def _install_root_wrapper() -> Dict[str, Any]:
             )
         return _sync_html(str(result))
 
-    target.endpoint = candidate_support_root
+    target.endpoint = live_trade_root
     if getattr(target, "dependant", None) is not None:
-        target.dependant.call = candidate_support_root
-    return {"ok": True, "version": POLICY_VERSION, "hub_version": HUB_VERSION}
+        target.dependant.call = live_trade_root
+    return {
+        "ok": True,
+        "version": POLICY_VERSION,
+        "hub_version": HUB_VERSION,
+        "candidate_support_tile": False,
+        "open_trades_enriched": True,
+    }
 
 
 INSTALL = _install_root_wrapper()
 print(
-    f"HUB_METALS_CANDIDATE_SUPPORT installed={INSTALL.get('ok')} version={POLICY_VERSION} hub_version={HUB_VERSION}",
+    f"HUB_METALS_OPEN_TRADES installed={INSTALL.get('ok')} version={POLICY_VERSION} hub_version={HUB_VERSION} candidate_tile={INSTALL.get('candidate_support_tile')}",
     flush=True,
 )
