@@ -1,4 +1,4 @@
-"""Portfolio Hub v0.6.22 production entrypoint.
+"""Portfolio Hub v0.6.23 production entrypoint.
 
 Keeps the presentation overlay chain intact, guarantees the Metals live Open
 Trades bridge is registered with highest route precedence on the exact FastAPI
@@ -16,26 +16,28 @@ import hub_metals_candidate_support_overlay as overlay
 
 app = overlay.app
 core = overlay.core
-HUB_VERSION = "0.6.22"
-POLICY_VERSION = "hub_live_telemetry_load_guard_v1_2026_10_19"
+HUB_VERSION = "0.6.23"
+POLICY_VERSION = "hub_live_telemetry_load_guard_v2_2026_10_19"
 core.APP_VERSION = HUB_VERSION
 
 
 # ---------------------------------------------------------------------------
-# Live-telemetry load guard
+# Live-telemetry load guards
 # ---------------------------------------------------------------------------
-# analysis_gateway historically emitted a very large research pack on startup,
-# every ~15 minutes, and whenever a producer version changed. That sweep makes
-# dozens of bounded-but-expensive Indices/Metals research requests (including
-# 250-row historical slices and causal studies). It is useful for ad-hoc research
-# but must not compete with the Portfolio Hub's live /api/portfolio-summary poll.
+# Two independent Hub background loops had grown into research harvesters:
+# 1) analysis_gateway emitted a large discovery/research pack on startup,
+#    producer-version changes and roughly every 15 minutes;
+# 2) app._worker fetched short-lane intelligence and Metals full-history practice
+#    research on every aggregate poll.
 #
-# Keep the lightweight /analysis/status freshness worker automatic. All heavy
-# discovery/research endpoints remain available unchanged and can still be called
-# explicitly when analysis is required. An env escape hatch preserves the old
-# behaviour for diagnostics without another code change.
+# Those endpoints remain available on demand. They simply no longer compete with
+# the live /api/portfolio-summary cockpit poll unless explicitly re-enabled.
 _PERIODIC_HEAVY_ANALYSIS_ENABLED = (
     os.getenv("HUB_PERIODIC_HEAVY_ANALYSIS_ENABLED", "false").strip().lower()
+    == "true"
+)
+_PERIODIC_CORE_RESEARCH_ENABLED = (
+    os.getenv("HUB_PERIODIC_CORE_RESEARCH_ENABLED", "false").strip().lower()
     == "true"
 )
 
@@ -56,6 +58,22 @@ if not _PERIODIC_HEAVY_ANALYSIS_ENABLED:
     # startup hook executes, so replace the target before application startup.
     _analysis_gateway._analysis_worker = _live_safe_analysis_worker
 
+if not _PERIODIC_CORE_RESEARCH_ENABLED:
+    def _live_safe_core_worker() -> None:
+        while True:
+            core.refresh_all()
+            try:
+                print(core.financial_review_line(core.aggregate_snapshot()), flush=True)
+            except Exception as exc:
+                print(f"PEP_FINANCIAL_REVIEW_ERROR {exc}", flush=True)
+            # Deliberately omit the old automatic calls to:
+            # - fetch_metals_research_review()
+            # - fetch_short_research_review('indices'/'bco')
+            # They are research surfaces, not live-health dependencies.
+            time.sleep(core.POLL_SECONDS)
+
+    # core.startup() resolves core._worker when startup executes.
+    core._worker = _live_safe_core_worker
 
 
 def _metals_live_trade_tile_guard() -> Dict[str, Any]:
@@ -116,6 +134,13 @@ print(
     f"periodic_heavy_analysis_enabled={_PERIODIC_HEAVY_ANALYSIS_ENABLED} "
     f"light_poll_seconds={_analysis_gateway.ANALYSIS_POLL_SECONDS} "
     "heavy_research_endpoints_preserved=True execution_authority=False",
+    flush=True,
+)
+print(
+    f"HUB_CORE_RESEARCH_LOAD_GUARD installed={not _PERIODIC_CORE_RESEARCH_ENABLED} "
+    f"periodic_core_research_enabled={_PERIODIC_CORE_RESEARCH_ENABLED} "
+    f"aggregate_poll_seconds={core.POLL_SECONDS} "
+    "research_endpoints_preserved=True execution_authority=False",
     flush=True,
 )
 print(
