@@ -22,7 +22,7 @@ import hub_stop_floor_overlay as base
 app = base.app
 core = base.core
 HUB_VERSION = "0.6.16"
-POLICY_VERSION = "hub_portfolio_tile_rows_v3_2026_10_15"
+POLICY_VERSION = "hub_portfolio_tile_rows_v4_nav_floor_2026_10_23"
 core.APP_VERSION = HUB_VERSION
 
 
@@ -41,7 +41,8 @@ def _sync_html(text: str) -> str:
         "('<span class=\"'+cls(p.live_stop_floor_pnl_gbp)+'\">'+money(p.live_stop_floor_pnl_gbp)+'</span>'),"
         "(p.live_risk_endpoint_complete?((p.live_risk_unquantified_trade_count||0)>0?"
         "('⚠ '+p.live_risk_unquantified_trade_count+' trade(s) unquantified · open P&L now '+money(p.unrealised_pnl_gbp)):"
-        "('Open P&L now '+money(p.unrealised_pnl_gbp)+' · '+(p.live_risk_total_trade_count||0)+' current broker stop(s) · before gaps/slippage')):"
+        "('Open P&L now '+money(p.unrealised_pnl_gbp)+' · '+(p.live_risk_total_trade_count||0)+' current broker stop(s) · before gaps/slippage'"
+        "+'<br><strong>NAV if all stops hit: '+money((p.nav_gbp==null||p.live_stop_floor_pnl_gbp==null)?null:(Number(p.nav_gbp)+Number(p.live_stop_floor_pnl_gbp)))+'</strong>')):"
         "('Telemetry unavailable: '+((p.live_risk_endpoint_failures||[]).join(', ')||'producer error'))))"
     )
 
@@ -62,9 +63,6 @@ def _sync_html(text: str) -> str:
     if count != 1:
         raise RuntimeError(f"Portfolio headline tile assignment replacement count={count}")
 
-    # Exact row geometry requested by the user. Keep the portfolio headline a
-    # two-column grid at every viewport width. NAV occupies its own first row,
-    # but stays the width of one normal tile and is centred horizontally.
     layout_css = (
         "\n<style id=\"portfolio-headline-row-layout\">"
         "#headline.headline{grid-template-columns:repeat(2,minmax(0,1fr))!important;}"
