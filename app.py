@@ -266,8 +266,17 @@ def fetch_source(key: str) -> Dict[str, Any]:
         # An optional probe failure must not take down canonical reporting.
         try:
             lane_payload = fetch_metals_lane_accounting(base, headers)
+            # Freshness and full lane coverage are mandatory for trusted P&L.
+            age = iso_age_seconds(lane_payload.get("time_utc"))
+            rows = lane_payload.get("live_lanes")
+            required_lanes = ("xau_long", "xau_short", "xag_short")
             verified = (lane_payload.get("ok") is True and lane_payload.get("reconciled") is True
-                        and lane_payload.get("coverage_verified") is True)
+                        and lane_payload.get("coverage_verified") is True
+                        and age is not None and age <= STALE_AFTER_SECONDS
+                        and isinstance(rows, dict)
+                        and all(isinstance(rows.get(lane), dict) and
+                                rows[lane].get("reporting_status") == "available"
+                                for lane in required_lanes))
             if verified and isinstance(lane_payload.get("live_lanes"), dict):
                 validated["accounting"]["live_lanes"] = lane_payload["live_lanes"]
                 validated["accounting"]["reconciled"] = True
