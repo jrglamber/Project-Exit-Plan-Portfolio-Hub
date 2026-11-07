@@ -237,6 +237,18 @@ def validate_summary(key: str, payload: Any) -> Dict[str, Any]:
     }
 
 
+def fetch_metals_lane_accounting(base: str, headers: Dict[str, str]) -> Dict[str, Any]:
+    """Optional, read-only producer probe; never promote unverified P&L."""
+    req = urllib.request.Request(base + "/api/live-metals-lane-accounting", headers=headers, method="GET")
+    with urllib.request.urlopen(req, timeout=SOURCE_TIMEOUT_SECONDS) as resp:
+        if int(getattr(resp, "status", 200)) != 200:
+            raise RuntimeError("Metals lane accounting HTTP error")
+        payload = json.loads(resp.read().decode("utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError("Metals lane accounting must be an object")
+    return payload
+
+
 def fetch_source(key: str) -> Dict[str, Any]:
     base = SOURCES[key]["url"]
     if not base:
@@ -249,7 +261,42 @@ def fetch_source(key: str) -> Dict[str, Any]:
         raw = resp.read()
         if int(getattr(resp, "status", 200)) != 200:
             raise RuntimeError(f"HTTP {getattr(resp, 'status', 'error')}")
-    return validate_summary(key, json.loads(raw.decode("utf-8")))
+    validated = validate_summary(key, json.loads(raw.decode("utf-8")))
+    if key == "metals":
+        # An optional probe failure must not take down canonical reporting.
+        try:
+            lane_payload = fetch_metals_lane_accounting(base, headers)
+            # Freshness and full lane coverage are mandatory for trusted P&L.
+            stamp = lane_payload.get("time_utc")
+            age = iso_age_seconds(stamp)
+            try:
+                parsed = datetime.fromisoformat(str(stamp).replace("Z", "+00:00"))
+                if parsed.tzinfo is None:
+                    parsed = parsed.replace(tzinfo=timezone.utc)
+                not_future = parsed.astimezone(timezone.utc) <= datetime.now(timezone.utc)
+            except (TypeError, ValueError, OverflowError):
+                not_future = False
+            rows = lane_payload.get("live_lanes")
+            required_lanes = ("xau_long", "xau_short", "xag_short")
+            verified = (lane_payload.get("ok") is True and lane_payload.get("reconciled") is True
+                        and lane_payload.get("coverage_verified") is True
+                        and age is not None and not_future and age <= STALE_AFTER_SECONDS
+                        and isinstance(rows, dict)
+                        and all(isinstance(rows.get(lane), dict) and
+                                rows[lane].get("reporting_status") == "available" and
+                                all(rows[lane].get(field) is not None for field in (
+                                    "realised_week_gbp", "realised_month_gbp",
+                                    "realised_all_time_gbp", "unrealised_gbp", "open_trades"))
+                                for lane in required_lanes))
+            if verified and isinstance(lane_payload.get("live_lanes"), dict):
+                validated["accounting"]["live_lanes"] = lane_payload["live_lanes"]
+                validated["accounting"]["reconciled"] = True
+                validated["accounting"]["coverage_verified"] = True
+            else:
+                validated["accounting"]["lane_reporting_status"] = str(lane_payload.get("reporting_status") or "awaiting_reconciliation")
+        except Exception:
+            validated["accounting"]["lane_reporting_status"] = "producer_unavailable"
+    return validated
 
 
 def refresh_one(key: str) -> None:
