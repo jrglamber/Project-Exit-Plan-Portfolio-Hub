@@ -283,7 +283,10 @@ def fetch_source(key: str) -> Dict[str, Any]:
                         and age is not None and not_future and age <= STALE_AFTER_SECONDS
                         and isinstance(rows, dict)
                         and all(isinstance(rows.get(lane), dict) and
-                                rows[lane].get("reporting_status") == "available"
+                                rows[lane].get("reporting_status") == "available" and
+                                all(rows[lane].get(field) is not None for field in (
+                                    "realised_week_gbp", "realised_month_gbp",
+                                    "realised_all_time_gbp", "unrealised_gbp", "open_trades"))
                                 for lane in required_lanes))
             if verified and isinstance(lane_payload.get("live_lanes"), dict):
                 validated["accounting"]["live_lanes"] = lane_payload["live_lanes"]
