@@ -20,7 +20,7 @@ class MetalsLaneVisibilityTests(unittest.TestCase):
         self.assertIsNone(result['metals_live_lanes']['xau_long']['realised_week_gbp'])
         self.assertEqual(result['metals_live_lanes']['xau_long']['reporting_status'], 'awaiting_reconciliation')
 
-    def test_three_lanes_reconcile_to_combined_metals(self):
+    def test_three_lanes_reconcile_with_producer_verified_scope(self):
         def lane(week):
             return dict(realised_week_gbp=week, realised_month_gbp=week,
                         realised_all_time_gbp=week, unrealised_gbp=0, open_trades=0)
@@ -29,6 +29,10 @@ class MetalsLaneVisibilityTests(unittest.TestCase):
             'realised_all_time_gbp': 6, 'reconciled': True, 'coverage_verified': True,
             'live_lanes': {'xau_long': lane(1), 'xau_short': lane(2), 'xag_short': lane(3)}},
             'basket': {'pnl_gbp': 0}}
+        # Legacy XAU-only summary is not the three-lane comparison baseline.
+        data['accounting']['realised_week_gbp'] = 3
+        data['accounting']['realised_month_gbp'] = 3
+        data['accounting']['realised_all_time_gbp'] = 3
         result = financial_review_payload({'sources': {'metals': {'data': data}}})
         self.assertTrue(result['metals_lane_reconciled'])
         self.assertEqual(result['metals_live_lanes']['xag_short']['realised_week_gbp'], 3)
