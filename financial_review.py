@@ -24,6 +24,36 @@ def financial_review_payload(snapshot):
             'basket_r': basket.get('pnl_r'),
             'open_trades': basket.get('open_trades'),
         }
+    # Explicitly expose the three approved live Metals lanes. Missing producer
+    # accounting must remain unknown, never silently become a zero P&L.
+    metals_data = ((sources.get('metals') or {}).get('data') or {})
+    metals_accounting = metals_data.get('accounting') or {}
+    producer_lanes = metals_accounting.get('live_lanes') or metals_accounting.get('lanes') or {}
+    lane_aliases = {
+        'xau_long': ('xau_long', 'XAU_LONG', 'XAUUSD_LONG'),
+        'xau_short': ('xau_short', 'XAU_SHORT', 'XAUUSD_SHORT'),
+        'xag_short': ('xag_short', 'XAG_SHORT', 'XAGUSD_SHORT'),
+    }
+    out['metals_live_lanes'] = {}
+    for lane, aliases in lane_aliases.items():
+        record = next((producer_lanes[a] for a in aliases
+                       if isinstance(producer_lanes, dict) and isinstance(producer_lanes.get(a), dict)), None)
+        fields = ('realised_week_gbp', 'realised_month_gbp',
+                  'realised_all_time_gbp', 'unrealised_gbp', 'open_trades')
+        out['metals_live_lanes'][lane] = {
+            'reporting_status': 'available' if record is not None and all(record.get(k) is not None for k in fields) else 'awaiting_reconciliation',
+            **{k: record.get(k) if record else None for k in fields},
+        }
+    out['metals_lane_reconciled'] = False
+    if all(v['reporting_status'] == 'available' for v in out['metals_live_lanes'].values()):
+        aggregate = out['strategies']['metals']
+        metrics = ('realised_week_gbp', 'realised_month_gbp',
+                   'realised_all_time_gbp', 'unrealised_gbp')
+        out['metals_lane_reconciled'] = all(
+            aggregate.get(k) is not None and
+            abs(sum(v[k] for v in out['metals_live_lanes'].values()) - aggregate[k]) < 0.02
+            for k in metrics
+        )
     # Use the same live scope as the aggregate snapshot and still require the
     # producer itself to report mode=live before it contributes to totals.
     configured_scope = tuple(portfolio.get('scope') or ('indices', 'metals', 'bco'))
