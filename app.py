@@ -237,6 +237,18 @@ def validate_summary(key: str, payload: Any) -> Dict[str, Any]:
     }
 
 
+def fetch_metals_lane_accounting(base: str, headers: Dict[str, str]) -> Dict[str, Any]:
+    """Optional, read-only producer probe; never promote unverified P&L."""
+    req = urllib.request.Request(base + "/api/live-metals-lane-accounting", headers=headers, method="GET")
+    with urllib.request.urlopen(req, timeout=SOURCE_TIMEOUT_SECONDS) as resp:
+        if int(getattr(resp, "status", 200)) != 200:
+            raise RuntimeError("Metals lane accounting HTTP error")
+        payload = json.loads(resp.read().decode("utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError("Metals lane accounting must be an object")
+    return payload
+
+
 def fetch_source(key: str) -> Dict[str, Any]:
     base = SOURCES[key]["url"]
     if not base:
@@ -249,7 +261,22 @@ def fetch_source(key: str) -> Dict[str, Any]:
         raw = resp.read()
         if int(getattr(resp, "status", 200)) != 200:
             raise RuntimeError(f"HTTP {getattr(resp, 'status', 'error')}")
-    return validate_summary(key, json.loads(raw.decode("utf-8")))
+    validated = validate_summary(key, json.loads(raw.decode("utf-8")))
+    if key == "metals":
+        # An optional probe failure must not take down canonical reporting.
+        try:
+            lane_payload = fetch_metals_lane_accounting(base, headers)
+            verified = (lane_payload.get("ok") is True and lane_payload.get("reconciled") is True
+                        and lane_payload.get("coverage_verified") is True)
+            if verified and isinstance(lane_payload.get("live_lanes"), dict):
+                validated["accounting"]["live_lanes"] = lane_payload["live_lanes"]
+                validated["accounting"]["reconciled"] = True
+                validated["accounting"]["coverage_verified"] = True
+            else:
+                validated["accounting"]["lane_reporting_status"] = str(lane_payload.get("reporting_status") or "awaiting_reconciliation")
+        except Exception:
+            validated["accounting"]["lane_reporting_status"] = "producer_unavailable"
+    return validated
 
 
 def refresh_one(key: str) -> None:
