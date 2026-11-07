@@ -45,16 +45,14 @@ def financial_review_payload(snapshot):
             'reporting_status': 'available' if producer_verified and record is not None and all(record.get(k) is not None for k in fields) else 'awaiting_reconciliation',
             **{k: record.get(k) if producer_verified and record else None for k in fields},
         }
-    out['metals_lane_reconciled'] = False
-    if all(v['reporting_status'] == 'available' for v in out['metals_live_lanes'].values()):
-        aggregate = out['strategies']['metals']
-        metrics = ('realised_week_gbp', 'realised_month_gbp',
-                   'realised_all_time_gbp', 'unrealised_gbp')
-        out['metals_lane_reconciled'] = all(
-            aggregate.get(k) is not None and
-            abs(sum(v[k] for v in out['metals_live_lanes'].values()) - aggregate[k]) < 0.02
-            for k in metrics
-        )
+    # Legacy Metals summary can be XAU-only. Never compare it with a
+    # three-lane total or claim reconciliation from mismatched scopes.
+    # Reconciliation is asserted by the broker-verified producer contract.
+    out['metals_lane_reconciled'] = (
+        producer_verified and
+        all(v['reporting_status'] == 'available'
+            for v in out['metals_live_lanes'].values())
+    )
     # Use the same live scope as the aggregate snapshot and still require the
     # producer itself to report mode=live before it contributes to totals.
     configured_scope = tuple(portfolio.get('scope') or ('indices', 'metals', 'bco'))
