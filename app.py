@@ -267,12 +267,20 @@ def fetch_source(key: str) -> Dict[str, Any]:
         try:
             lane_payload = fetch_metals_lane_accounting(base, headers)
             # Freshness and full lane coverage are mandatory for trusted P&L.
-            age = iso_age_seconds(lane_payload.get("time_utc"))
+            stamp = lane_payload.get("time_utc")
+            age = iso_age_seconds(stamp)
+            try:
+                parsed = datetime.fromisoformat(str(stamp).replace("Z", "+00:00"))
+                if parsed.tzinfo is None:
+                    parsed = parsed.replace(tzinfo=timezone.utc)
+                not_future = parsed.astimezone(timezone.utc) <= datetime.now(timezone.utc)
+            except (TypeError, ValueError, OverflowError):
+                not_future = False
             rows = lane_payload.get("live_lanes")
             required_lanes = ("xau_long", "xau_short", "xag_short")
             verified = (lane_payload.get("ok") is True and lane_payload.get("reconciled") is True
                         and lane_payload.get("coverage_verified") is True
-                        and age is not None and age <= STALE_AFTER_SECONDS
+                        and age is not None and not_future and age <= STALE_AFTER_SECONDS
                         and isinstance(rows, dict)
                         and all(isinstance(rows.get(lane), dict) and
                                 rows[lane].get("reporting_status") == "available"
