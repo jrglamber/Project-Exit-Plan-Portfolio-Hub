@@ -811,7 +811,7 @@ details{background:var(--panel);border:1px solid var(--border);border-radius:10p
 @media(max-width:900px){.headline,.cards{grid-template-columns:repeat(2,minmax(0,1fr))}.split{grid-template-columns:1fr}.attention{grid-template-columns:1fr 1fr}}
 @media(max-width:560px){body{padding:7px}h1{font-size:23px}.attention{grid-template-columns:1fr}.value{font-size:18px}.strategy-head{display:block}.badges{justify-content:flex-start;margin-top:7px}.activity-row,.research-row,.risk-row{grid-template-columns:78px 1fr}.activity-row>*:last-child,.research-row>*:last-child,.risk-row>*:last-child{grid-column:2}}
 </style></head>
-<body><div id="aiObserverWarning" role="alert" style="display:block;padding:12px;background:#4c2222;color:white;font-weight:bold">AI Observer monitoring pending...</div><div class="page">
+<body><div class="page">
 <h1>Project Exit Plan - Portfolio Hub</h1>
 <div class="sub">v0.6.1 &middot; portfolio cockpit &middot; live-money first &middot; fixed-% manual risk control</div>
 <div class="section-title">Portfolio</div><div id="portfolioScope" class="top-status">Loading...</div><div id="headline" class="grid headline"></div><div id="healthBar" class="healthbar">Checking health...</div>
@@ -846,4 +846,5 @@ async function load(){try{var res=await fetch('/api/aggregate',{cache:'no-store'
 async function loadAiObserverWatchdog(){try{var r=await fetch('/api/ai-observer-watchdog',{cache:'no-store'}),d=await r.json(),rows=d.sources||{},bad=Object.keys(rows).filter(function(k){return rows[k].state!=='OK'}),bar=document.getElementById('aiObserverWarning');if(bar){bar.style.display=bad.length?'block':'none';bar.textContent=bad.length?'AI OBSERVER WARNING: '+bad.map(function(k){return k.toUpperCase()+' '+rows[k].state+' '+(rows[k].alerts||[]).join(', ')}).join(' | '):'AI Observers healthy'}}catch(e){var bar=document.getElementById('aiObserverWarning');if(bar){bar.style.display='block';bar.textContent='AI OBSERVER MONITOR UNAVAILABLE'}}}
 loadAiObserverWatchdog();setInterval(loadAiObserverWatchdog,60000);
 load();loadResearch();setInterval(load,20000);setInterval(loadResearch,60000);
-</script></body></html>'''
+</script><div id="aiObserverWarning" role="alert" style="display:block;padding:12px;background:#4c2222;color:white;font-weight:bold">AI Observer monitoring pending...</div>
+</body></html>'''
