@@ -33,7 +33,7 @@ SOURCES = {
 # can be overridden without changing producer contracts.
 STRATEGY_LANE_NOTES = {
     "indices": os.getenv("INDICES_LANE_NOTE", "NAS100 + US500 live - long-only"),
-    "metals": os.getenv("METALS_LANE_NOTE", "XAU LONG live - XAU SHORT / XAG research"),
+    "metals": os.getenv("METALS_LANE_NOTE", "XAU LONG + XAU SHORT + XAG SHORT live; XAG LONG research-only"),
     "bco": os.getenv("BCO_LANE_NOTE", "BCO live"),
 }
 
@@ -750,6 +750,12 @@ def aggregate_snapshot() -> Dict[str, Any]:
             "existing_positions_never_resized": True, "strategies": risk_review,
         },
     }
+
+
+@app.get("/api/ai-observer-watchdog")
+def ai_observer_watchdog_status():
+    from ai_observer_watchdog import check_sources
+    return {"research_only": True, "sources": check_sources(SOURCES)}
 
 
 @app.get("/health")
