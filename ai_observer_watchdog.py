@@ -25,7 +25,7 @@ def check_sources(sources, timeout=3):
                     payload = json.load(response)
                 if not isinstance(payload, dict):
                     continue
-                audit = payload.get("audit") or {}
+                audit = payload.get("audit") or (payload if "capture_age_hours" in payload else {})
                 alerts = audit.get("alerts") or []
                 if alerts or payload.get("api_key_configured") is False or payload.get("ai_enabled") is False:
                     state = "ALERT"
