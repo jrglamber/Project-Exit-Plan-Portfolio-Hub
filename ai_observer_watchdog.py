@@ -42,6 +42,7 @@ def check_sources(sources, timeout=3):
                     "checked_at_utc": datetime.now(timezone.utc).isoformat(),
                 }
                 break
-            except Exception:
+            except Exception as exc:
+                result[name]["reason"] = f"{path}: {type(exc).__name__}: {str(exc)[:160]}"
                 continue
     return result
