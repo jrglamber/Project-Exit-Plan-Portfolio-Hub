@@ -1,0 +1,23 @@
+name: Hub LIVE Metals production smoke
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'app.py'
+      - 'hub_metals_candidate_support_overlay.py'
+      - 'hub_metals_live_positions_bridge.py'
+      - 'hub_entrypoint.py'
+      - 'smoke_hub_metals_live.py'
+      - '.github/workflows/hub-metals-live-smoke.yml'
+  workflow_dispatch:
+jobs:
+  live-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 9
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Verify deployed Hub page, real live Metals counts, and portfolio open P&L
+        run: python smoke_hub_metals_live.py
