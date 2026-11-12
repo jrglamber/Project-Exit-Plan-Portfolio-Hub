@@ -1,0 +1,33 @@
+name: Hub Metals LIVE XAU and XAG Short regression
+on:
+  pull_request:
+    paths:
+      - 'app.py'
+      - 'hub_metals_live_positions_bridge.py'
+      - 'hub_metals_candidate_support_overlay.py'
+      - 'hub_entrypoint.py'
+      - 'test_hub_metals_live_bridge.py'
+      - '.github/workflows/hub-metals-live-bridge-tests.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'app.py'
+      - 'hub_metals_live_positions_bridge.py'
+      - 'hub_metals_candidate_support_overlay.py'
+      - 'hub_entrypoint.py'
+      - 'test_hub_metals_live_bridge.py'
+      - '.github/workflows/hub-metals-live-bridge-tests.yml'
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Check compiled code and pure live-accounting regressions
+        run: |
+          python -m py_compile app.py hub_entrypoint.py hub_metals_candidate_support_overlay.py hub_metals_live_positions_bridge.py test_hub_metals_live_bridge.py
+          python -m unittest -v test_hub_metals_live_bridge
