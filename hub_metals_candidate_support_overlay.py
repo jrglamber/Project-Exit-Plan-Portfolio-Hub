@@ -1,8 +1,8 @@
-"""Portfolio Hub v0.6.19 — Metals live Open Trades detail.
+"""Portfolio Hub — combined LIVE XAU + XAG SHORT open-trade bridge.
 
-Presentation/read-only bridge. Removes the separate Metals Candidate Support tile
-and enriches the existing Metals Open Trades tile with LIVE XAU total, LONG,
-SHORT and last-opened UK time. XAG research/demo is excluded.
+Preserves the original Metals candidate research history while painting
+the actual broker-verified LIVE XAU and XAG SHORT count in the Hub tile.
+Practice XAG LONG/SHORT never counted. Fail closed on missing broker data.
 """
 from __future__ import annotations
 
@@ -14,11 +14,12 @@ from typing import Any, Dict
 from fastapi.responses import Response
 
 import hub_tile_order_overlay as base
+import hub_metals_live_positions_bridge as live_bridge
 
 app = base.app
 core = base.core
-HUB_VERSION = "0.6.19"
-POLICY_VERSION = "hub_metals_open_trade_tile_v3_2026_10_16"
+HUB_VERSION = "0.6.24"
+POLICY_VERSION = "hub_metals_open_trade_tile_v4_xau_xag_2026_11_12"
 core.APP_VERSION = HUB_VERSION
 
 
@@ -30,7 +31,7 @@ def _fetch_metals_trade_tile() -> Dict[str, Any]:
     secret = str(getattr(core, "SOURCE_SECRET", "") or "").strip()
     if secret:
         headers["X-Aggregate-Secret"] = secret
-    req = urllib.request.Request(metals + "/api/live-xau-trade-tile", headers=headers, method="GET")
+    req = urllib.request.Request(metals + "/api/live-metals-open-positions", headers=headers, method="GET")
     timeout = float(getattr(core, "SOURCE_TIMEOUT_SECONDS", 5.0) or 5.0)
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         payload = json.loads(resp.read().decode("utf-8"))
@@ -43,36 +44,38 @@ def _fetch_metals_trade_tile() -> Dict[str, Any]:
 
 @app.get("/api/metals-live-trade-tile")
 def metals_live_trade_tile() -> Dict[str, Any]:
+    source = "metals:/api/live-metals-open-positions"
     try:
         payload = _fetch_metals_trade_tile()
+        verified = live_bridge.verify(payload, max_age_seconds=float(getattr(core, "STALE_AFTER_SECONDS", 120)))
         return {
-            "ok": bool(payload.get("ok", True)),
-            "source": "metals:/api/live-xau-trade-tile",
-            "scope": "LIVE_XAU_ONLY",
-            "open_count": int(payload.get("open_count") or 0),
-            "long_count": int(payload.get("long_count") or 0),
-            "short_count": int(payload.get("short_count") or 0),
-            "last_opened_at_utc": payload.get("last_opened_at_utc"),
-            "demo_research_excluded": ["XAGUSD"],
+            "ok": True,
+            "version": POLICY_VERSION,
+            "source": source, "scope": live_bridge.EXPECTED_SCOPE,
+            "open_count": verified["open_count"],
+            "xau_count": verified["xau_count"],
+            "xag_short_count": verified["xag_short_count"],
+            "xag_broker_link_reconciled": verified["reconciled"],
+            "open_pnl_gbp": verified["open_pnl_gbp"],
+            "last_opened_at_utc": verified["last_opened_at_utc"],
+            "demo_research_excluded": ["XAG_LONG","XAG_PRACTICE"],
             "strategy_changed": False,
         }
     except Exception as exc:
         return {
-            "ok": False,
-            "source": "metals:/api/live-xau-trade-tile",
-            "scope": "LIVE_XAU_ONLY",
-            "open_count": None,
-            "long_count": None,
-            "short_count": None,
+            "ok": False, "version": POLICY_VERSION,
+            "source": source, "scope": live_bridge.EXPECTED_SCOPE,
+            "open_count": None, "xau_count": None,
+            "xag_short_count": None, "open_pnl_gbp": None,
             "last_opened_at_utc": None,
-            "demo_research_excluded": ["XAGUSD"],
+            "demo_research_excluded": ["XAG_LONG","XAG_PRACTICE"],
             "strategy_changed": False,
             "error": f"{type(exc).__name__}: {exc}",
         }
 
 
 _WIDGET = r'''
-<script id="hub-metals-open-trades-detail-v3">
+<script id="hub-metals-open-trades-detail-v4">
 (function(){
   function findMetals(){
     return Array.from(document.querySelectorAll('.strategy')).find(function(el){
@@ -105,21 +108,27 @@ _WIDGET = r'''
   function paint(x){
     removeCandidate();
     var c=byLabel('Open Trades');
-    if(!c || !x || !x.ok) return;
+    if(!c)return;
     var v=c.querySelector('.value');
     var s=c.querySelector('.small');
-    var value=String(x.open_count||0);
-    var note=String(x.long_count||0)+' LONG · '+String(x.short_count||0)+' SHORT · Last opened '+whenUK(x.last_opened_at_utc);
-    if(v && v.textContent!==value) v.textContent=value;
-    if(s && s.textContent!==note) s.textContent=note;
+    if(!x || !x.ok){
+      if(v)v.textContent='—';
+      if(s)s.textContent='LIVE Metals count unavailable · broker/reconciliation check required';
+      return;
+    }
+    var value=String(x.open_count);
+    var note='LIVE XAU '+String(x.xau_count)+' · LIVE XAG SHORT '+
+      String(x.xag_short_count)+' · Last opened '+whenUK(x.last_opened_at_utc);
+    if(v && v.textContent!==value)v.textContent=value;
+    if(s && s.textContent!==note)s.textContent=note;
   }
   async function refresh(){
     removeCandidate();
     try{
       var r=await fetch('/api/metals-live-trade-tile',{cache:'no-store'});
-      if(!r.ok)return;
+      if(!r.ok)throw Error("Hub tile HTTP "+r.status);
       paint(await r.json());
-    }catch(e){}
+    }catch(e){paint({ok:false});}
   }
   function start(){ refresh(); setTimeout(refresh,750); setInterval(refresh,5000); }
   if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
@@ -130,10 +139,10 @@ _WIDGET = r'''
 
 def _sync_html(text: str) -> str:
     out = str(text)
-    for old in ("0.6.18", "0.6.17", "0.6.16"):
+    for old in ("0.6.23", "0.6.22", "0.6.21", "0.6.20", "0.6.19", "0.6.18", "0.6.17", "0.6.16"):
         out = out.replace(f"v{old} &middot; portfolio cockpit", f"v{HUB_VERSION} &middot; portfolio cockpit")
         out = out.replace(f"v{old} · portfolio cockpit", f"v{HUB_VERSION} · portfolio cockpit")
-    if "hub-metals-open-trades-detail-v3" not in out:
+    if "hub-metals-open-trades-detail-v4" not in out:
         out = out.replace("</body>", _WIDGET + "\n</body>", 1) if "</body>" in out else out + _WIDGET
     return out
 
