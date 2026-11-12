@@ -1,4 +1,4 @@
-"""Portfolio Hub v0.6.23 production entrypoint.
+"""Portfolio Hub v0.6.24 production entrypoint.
 
 Keeps the presentation overlay chain intact, guarantees the Metals live Open
 Trades bridge is registered with highest route precedence on the exact FastAPI
@@ -16,7 +16,7 @@ import hub_metals_candidate_support_overlay as overlay
 
 app = overlay.app
 core = overlay.core
-HUB_VERSION = "0.6.23"
+HUB_VERSION = "0.6.24"
 POLICY_VERSION = "hub_live_telemetry_load_guard_v2_2026_10_19"
 core.APP_VERSION = HUB_VERSION
 
@@ -117,8 +117,9 @@ try:
         "HUB_METALS_LIVE_TILE_PROBE "
         f"ok={bool(_probe.get('ok'))} "
         f"open_count={_probe.get('open_count')} "
-        f"long_count={_probe.get('long_count')} "
-        f"short_count={_probe.get('short_count')} "
+        f"xau_count={_probe.get('xau_count')} "
+        f"xag_short_count={_probe.get('xag_short_count')} "
+        f"open_pnl_gbp={_probe.get('open_pnl_gbp')} "
         f"last_opened_at_utc={_probe.get('last_opened_at_utc')} "
         f"error={_probe.get('error')}",
         flush=True,

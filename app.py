@@ -10,6 +10,7 @@ from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, Optional
 
 from financial_review import financial_review_line
+import hub_metals_live_positions_bridge as metals_live
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 
@@ -237,6 +238,16 @@ def validate_summary(key: str, payload: Any) -> Dict[str, Any]:
     }
 
 
+def fetch_metals_live_positions(base: str, headers: Dict[str, str]) -> Dict[str, Any]:
+    """Fetch current LIVE broker-backed XAU+XAG, not demo or historical estimates."""
+    req = urllib.request.Request(base + "/api/live-metals-open-positions", headers=headers, method="GET")
+    with urllib.request.urlopen(req, timeout=SOURCE_TIMEOUT_SECONDS) as resp:
+        if int(getattr(resp, "status", 200)) != 200:
+            raise RuntimeError("LIVE Metals open positions HTTP error")
+        payload = json.loads(resp.read().decode("utf-8"))
+    return metals_live.verify(payload, max_age_seconds=STALE_AFTER_SECONDS)
+
+
 def fetch_metals_lane_accounting(base: str, headers: Dict[str, str]) -> Dict[str, Any]:
     """Optional, read-only producer probe; never promote unverified P&L."""
     req = urllib.request.Request(base + "/api/live-metals-lane-accounting", headers=headers, method="GET")
@@ -296,6 +307,14 @@ def fetch_source(key: str) -> Dict[str, Any]:
                 validated["accounting"]["lane_reporting_status"] = str(lane_payload.get("reporting_status") or "awaiting_reconciliation")
         except Exception:
             validated["accounting"]["lane_reporting_status"] = "producer_unavailable"
+        # The original /api/portfolio-summary basket is XAU-only. The only
+        # accepted Metals open P&L/count comes from the reconciled LIVE XAU +
+        # LIVE XAG Short broker data, not the XAG practice basket.
+        try:
+            proof = fetch_metals_live_positions(base, headers)
+            metals_live.apply(validated, proof)
+        except Exception as exc:
+            metals_live.mark_incomplete(validated, f"{type(exc).__name__}: {exc}")
     return validated
 
 
@@ -618,11 +637,13 @@ def aggregate_snapshot() -> Dict[str, Any]:
     drawdown = (nav_hwm - nav) if nav is not None and nav_hwm is not None else None
 
     pnl_values = [
-        d["basket"].get("pnl_gbp")
+        d.get("basket", {}).get("pnl_gbp")
         for d in live_values
-        if d.get("basket", {}).get("pnl_gbp") is not None
     ]
-    total_unrealised = sum(pnl_values) if pnl_values else None
+    open_pnl_complete = bool(live_values) and all(v is not None for v in pnl_values)
+    total_unrealised = sum(pnl_values) if open_pnl_complete else None
+    if not open_pnl_complete:
+        portfolio_warnings.append("live open P&L unavailable for one or more strategies")
 
     def sum_accounting(field: str) -> Optional[float]:
         values = [safe_float((d.get("accounting") or {}).get(field)) for d in live_values]
@@ -634,15 +655,24 @@ def aggregate_snapshot() -> Dict[str, Any]:
     realised_month = sum_accounting("realised_month_gbp")
     realised_all_time = sum_accounting("realised_all_time_gbp")
     month_total = (
-        (realised_month or 0.0) + (total_unrealised or 0.0)
-        if realised_month is not None or total_unrealised is not None
+        realised_month + total_unrealised
+        if realised_month is not None and total_unrealised is not None
         else None
     )
 
     open_risk_values = []
-    for d in live_values:
-        count = d.get("basket", {}).get("open_trades")
+    risk_scope_warnings = []
+    for key, d, _view in live_rows:
+        basket = d.get("basket", {})
+        count = basket.get("open_trades")
         risk = d.get("risk_per_trade_gbp")
+        if key == "metals":
+            # The fixed Metals risk value is XAU's base request, not XAG's
+            # separately sized one-unit pilot. Never multiply XAG positions
+            # by XAU per-trade risk; show a partial estimate explicitly.
+            count = basket.get("xau_only_open_trades")
+            if (basket.get("live_xag_short_open_count") or 0) > 0:
+                risk_scope_warnings.append("Metals XAG Short pilot risk excluded")
         if count is not None and risk is not None:
             open_risk_values.append(max(0, count) * max(0.0, risk))
     open_risk = sum(open_risk_values) if open_risk_values else None
@@ -695,12 +725,16 @@ def aggregate_snapshot() -> Dict[str, Any]:
         "nav_tolerance_gbp": nav_tolerance_gbp,
         "nav_disagreement": nav_disagreement,
         "unrealised_pnl_gbp": total_unrealised,
+        "unrealised_pnl_complete": open_pnl_complete,
+        "metals_realised_scope": "XAU_ONLY_XAG_SHORT_LEDGER_PENDING",
         "realised_today_gbp": realised_today,
         "realised_week_gbp": realised_week,
         "realised_month_gbp": realised_month,
         "realised_all_time_gbp": realised_all_time,
         "month_total_gbp": month_total,
         "open_risk_estimate_gbp": open_risk,
+        "open_risk_estimate_complete": not bool(risk_scope_warnings),
+        "open_risk_estimate_warnings": risk_scope_warnings,
         "nav_high_water_gbp": nav_hwm,
         "drawdown_gbp": drawdown,
         "drawdown_scope": "hub_observed_since_process_start",
@@ -835,14 +869,33 @@ function cls(v){var n=num(v);return n===null?'':(n>0?'green':n<0?'red':'')}
 function when(v){if(!v)return '-';try{return new Date(v).toLocaleString('en-GB',{timeZone:'Europe/London',day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'})}catch(e){return String(v)}}
 function stateBadge(s){if(!s.configured)return '<span class="badge red">NOT CONFIGURED</span>';if(!s.data)return '<span class="badge red">UNAVAILABLE</span>';if(s.contract_match===false)return '<span class="badge red">SCHEMA MISMATCH</span>';if(s.stale)return '<span class="badge amber">STALE</span>';if(s.ok)return '<span class="badge green">HEALTHY</span>';return '<span class="badge amber">LAST GOOD</span>'}
 function card(label,val,sub){return '<div class="card"><div class="label">'+label+'</div><div class="value">'+val+'</div><div class="small">'+(sub||'')+'</div></div>'}
-function strategyHtml(key,s,notes){var d=s.data||{},b=d.basket||{},a=d.accounting||{},em=d.exit_management||{};var mode=(d.mode||'unknown').toUpperCase(),status=(d.status||'UNKNOWN').toUpperCase(),dir=(b.direction||'').toUpperCase();var lane=(notes||{})[key]||'';var riskPct=(num(d.risk_per_trade_gbp)!==null&&num(d.nav_gbp))?pct(num(d.risk_per_trade_gbp)/num(d.nav_gbp)*100):'-';var next=(em.next_cycle_manager&&em.next_cycle_manager!==em.current_manager)?' / next '+em.next_cycle_manager:'';return '<div class="strategy"><div class="strategy-head"><div><div class="strategy-title">'+NAMES[key]+'</div><div class="lane">'+lane+'</div></div><div class="badges"><span class="badge">'+mode+'</span><span class="badge">'+status+(dir?' / '+dir:'')+'</span>'+stateBadge(s)+'</div></div><div class="grid cards">'+card('Open P&L','<span class="'+cls(b.pnl_gbp)+'">'+money(b.pnl_gbp)+'</span>',rr(b.pnl_r))+card('Realised W / M',money(a.realised_week_gbp),'Month '+money(a.realised_month_gbp))+card('All-time realised',money(a.realised_all_time_gbp),'Today '+money(a.realised_today_gbp))+card('High water',money(b.high_water_gbp),rr(b.high_water_r)+' / '+when(b.high_water_at_utc))+card('Giveback',money(b.giveback_gbp),rr(b.giveback_r))+card('Open trades',intval(b.open_trades),'Last opened '+when(b.last_trade_opened_at_utc))+card('Approved risk / trade',money(d.risk_per_trade_gbp),riskPct+' of NAV')+card('Manager',em.current_manager||'-',next+(em.pending_broker_actions?' / '+em.pending_broker_actions+' pending':''))+'</div></div>'}
+function strategyHtml(key,s,notes){
+ var d=s.data||{}, b=d.basket||{}, a=d.accounting||{}, em=d.exit_management||{};
+ var mode=(d.mode||'unknown').toUpperCase(), status=(d.status||'UNKNOWN').toUpperCase(), dir=(b.direction||'').toUpperCase();
+ var lane=(notes||{})[key]||'', isMetals=key==='metals', liveMetals=isMetals&&b.live_positions_status==='BROKER_VERIFIED';
+ var riskPct=(num(d.risk_per_trade_gbp)!==null&&num(d.nav_gbp))?pct(num(d.risk_per_trade_gbp)/num(d.nav_gbp)*100):'-';
+ var next=(em.next_cycle_manager&&em.next_cycle_manager!==em.current_manager)?' / next '+em.next_cycle_manager:'';
+ var pnlNote=isMetals?(liveMetals?'LIVE XAU + XAG SHORT · XAU-only '+rr(b.xau_only_pnl_r):'LIVE Metals broker data unavailable'):rr(b.pnl_r);
+ var countNote=isMetals?(liveMetals?'LIVE XAU '+intval(b.live_xau_open_count)+' · LIVE XAG SHORT '+intval(b.live_xag_short_open_count)+' · Last opened '+when(b.last_trade_opened_at_utc):'LIVE Metals broker count unavailable'):'Last opened '+when(b.last_trade_opened_at_utc);
+ return '<div class="strategy"><div class="strategy-head"><div><div class="strategy-title">'+NAMES[key]+'</div><div class="lane">'+lane+
+ '</div></div><div class="badges"><span class="badge">'+mode+'</span><span class="badge">'+status+(dir?' / '+dir:'')+'</span>'+stateBadge(s)+'</div></div><div class="grid cards">'+
+ card(isMetals?'Open P&L · LIVE XAU + XAG':'Open P&L','<span class="'+cls(b.pnl_gbp)+'">'+money(b.pnl_gbp)+'</span>',pnlNote)+
+ card('Realised W / M',money(a.realised_week_gbp),'Month '+money(a.realised_month_gbp)+(isMetals?' · XAU-only; XAG ledger pending':''))+
+ card('All-time realised',money(a.realised_all_time_gbp),'Today '+money(a.realised_today_gbp)+(isMetals?' · XAU only':''))+
+ card(isMetals?'High water · XAU only':'High water',money(b.high_water_gbp),rr(b.high_water_r)+' / '+when(b.high_water_at_utc))+
+ card(isMetals?'Giveback · XAU only':'Giveback',money(b.giveback_gbp),rr(b.giveback_r))+
+ card('Open trades',intval(b.open_trades),countNote)+
+ card('Approved risk / trade',money(d.risk_per_trade_gbp),riskPct+' of NAV'+(isMetals?' · XAU base; XAG pilot separate':''))+
+ card('Manager',em.current_manager||'-',next+(em.pending_broker_actions?' / '+em.pending_broker_actions+' pending':''))+
+ '</div></div>';
+}
 function renderAttention(att){var box=document.getElementById('attention'),items=(att||{}).items||[];if(!items.length){box.innerHTML='<div class="okbar">&#10003; No action required</div>';return}box.innerHTML='<div class="attention">'+items.map(function(x){return '<div class="attention-item '+(x.severity||'')+'"><strong>'+(NAMES[x.strategy]||x.strategy)+'</strong><div class="'+(x.severity==='bad'?'red':x.severity==='warn'?'amber':'')+'" style="margin-top:4px">'+x.message+'</div></div>'}).join('')+'</div>'}
 function renderActivity(items){var box=document.getElementById('recentActivity');if(!items||!items.length){box.innerHTML='<div class="small">No material events captured since this Hub process started.</div>';return}box.innerHTML=items.map(function(x){return '<div class="activity-row"><div class="time">'+when(x.at_utc)+'</div><div><strong>'+(NAMES[x.strategy]||x.label||x.strategy)+'</strong><br>'+x.message+'</div><span class="pill '+(x.tone==='good'?'green':x.tone==='bad'?'red':x.tone==='warn'?'amber':'muted')+'">'+String(x.kind||'event').replaceAll('_',' ')+'</span></div>'}).join('')}
 function renderRisk(risk){var rows=(risk||{}).strategies||[],due=when((risk||{}).review_due_at_utc);document.getElementById('riskReview').innerHTML='<div class="small">Agreed fixed percentages · button recalculates from fresh live NAV · NEW trades only · broker minimum position size is used automatically when the calculated size is too small · existing positions are never resized · next formal review due '+due+'</div>'+(rows.length?rows.map(function(r){var lane=r.strategy==='metals'?'XAU LONG live':(r.strategy==='indices'?'NAS100 + US500 live':'BCO live');var fixed=num(r.fixed_risk_pct_of_nav),target=num(r.calculated_target_gbp);return '<div class="risk-row"><strong>'+(r.label||NAMES[r.strategy])+'</strong><div>'+lane+'<div class="small">Fixed risk <strong>'+((fixed===null)?'-':fixed.toFixed(3)+'%')+'</strong> of NAV · Current '+money(r.risk_per_trade_gbp)+' / trade</div><div class="small">NAV '+money(r.nav_gbp)+' · Calculated target now <strong>'+money(target)+'</strong></div><div class="small">If broker minimum size implies more cash risk than the target, the producer keeps the minimum-size execution rule and records the effective risk.</div><div id="risk-result-'+r.strategy+'" class="small"></div></div><button data-strategy="'+r.strategy+'" onclick="applyRisk(this.dataset.strategy,'+(fixed===null?'null':fixed)+')" style="cursor:pointer;background:#10263b;color:#d8ecff;border:1px solid #1f4e73;border-radius:7px;padding:7px 10px;font-weight:800">Apply '+((fixed===null)?'fixed %':fixed.toFixed(3)+'%')+'</button></div>'}).join(''):'<div class="small">No live strategy risk rows available.</div>')}
 
 async function applyRisk(strategy,fixedPct){var box=document.getElementById('risk-result-'+strategy);if(fixedPct===null||!Number.isFinite(Number(fixedPct))){if(box)box.textContent='Fixed risk profile unavailable.';return}var ok=window.confirm('Recalculate '+(NAMES[strategy]||strategy)+' NEW-trade risk from fresh NAV at '+Number(fixedPct).toFixed(3)+'%? Existing positions will not be resized.');if(!ok){if(box)box.textContent='Cancelled.';return}var secret=window.prompt('Enter the control secret for '+(NAMES[strategy]||strategy)+' (WEBHOOK_SECRET; BCO also accepts ADMIN_SECRET)');if(!secret){if(box)box.textContent='Cancelled: no control secret entered.';return}if(box)box.textContent='Reading fresh NAV and applying fixed percentage...';try{var resp=await fetch('/api/risk-control/'+encodeURIComponent(strategy),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({confirm:'APPLY_FIXED_RISK_PCT',control_secret:secret})});var data=await resp.json();if(!resp.ok||data.status!=='ok')throw new Error(data.detail||data.error||('HTTP '+resp.status));var minText='';var sp=data.sizing_preview||{};if(sp.used_minimum_trade_size||sp.minimum_units_used)minText=' · broker minimum size in use';if(sp.effective_risk_gbp!==undefined&&sp.effective_risk_gbp!==null)minText+=' · effective preview '+money(sp.effective_risk_gbp);if(box)box.innerHTML='<span class="green">Applied '+Number(data.fixed_risk_pct_of_nav||fixedPct).toFixed(3)+'% of NAV '+money(data.nav_gbp)+' → target '+money(data.current_risk_per_trade_gbp)+' / new trade'+minText+'.</span>';window.setTimeout(load,2500)}catch(e){if(box)box.innerHTML='<span class="red">Risk update failed: '+String(e.message||e)+'</span>'}}
 async function loadResearch(){try{var r=await fetch('/api/research-summary',{cache:'no-store'}),x=await r.json(),rows=x.sources||{};document.getElementById('research').innerHTML=ORDER.map(function(k){var d=rows[k]||{},main=d.main_challenger||{},sample=(main.sample!==null&&main.sample!==undefined)?' / sample '+main.sample:'';return '<div class="research-row"><strong>'+NAMES[k]+'</strong><div>Current '+(d.current_manager||'-')+' / Main challenger '+(main.label||'collecting')+sample+'<div class="small">'+(main.status||d.status||'research-only')+(main.updated_at_utc?' / last '+when(main.updated_at_utc):'')+'</div></div><span class="pill '+(d.ok?'green':'amber')+'">'+(d.ok?'COLLECTING':'DEGRADED')+'</span></div>'}).join('')}catch(e){document.getElementById('research').innerHTML='<div class="small">Research summary unavailable; producer research collection is independent of this dashboard.</div>'}}
-async function load(){try{var res=await fetch('/api/aggregate',{cache:'no-store'}),x=await res.json(),p=x.portfolio||{},scope=(p.scope||[]).map(function(k){return NAMES[k]||k}).join(' + ');document.getElementById('portfolioScope').innerHTML='LIVE scope: <strong>'+(scope||'none')+'</strong> / open risk '+money(p.open_risk_estimate_gbp)+' / refreshed '+when(x.generated_at_utc);document.getElementById('headline').innerHTML=[card('Portfolio NAV',money(p.nav_gbp),'Freshest '+(NAMES[p.nav_source]||p.nav_source||'source')),card('Open P&L','<span class="'+cls(p.unrealised_pnl_gbp)+'">'+money(p.unrealised_pnl_gbp)+'</span>','Live strategies only'),card('Today realised','<span class="'+cls(p.realised_today_gbp)+'">'+money(p.realised_today_gbp)+'</span>','Live strategies only'),card('Week realised','<span class="'+cls(p.realised_week_gbp)+'">'+money(p.realised_week_gbp)+'</span>','Live strategies only'),card('Month total','<span class="'+cls(p.month_total_gbp)+'">'+money(p.month_total_gbp)+'</span>','Realised '+money(p.realised_month_gbp)+' + open '+money(p.unrealised_pnl_gbp)),card('All-time realised','<span class="'+cls(p.realised_all_time_gbp)+'">'+money(p.realised_all_time_gbp)+'</span>','Live strategies only'),card('Observed drawdown',money(p.drawdown_gbp),'NAV HWM '+money(p.nav_high_water_gbp)+' / since Hub process start'),card('Open risk estimate',money(p.open_risk_estimate_gbp),'Open trades x approved risk')].join('');document.getElementById('strategies').innerHTML=ORDER.map(function(k){return strategyHtml(k,x.sources[k]||{},x.strategy_lane_notes||{})}).join('');renderAttention(x.attention);renderActivity(x.recent_activity);renderRisk(x.risk_review);var att=(x.attention||{}).items||[];var hb=document.getElementById('healthBar');hb.className=att.some(function(a){return a.severity==='bad'})?'badbar':att.length?'warnbar':'healthbar';hb.innerHTML=att.length?(att.length+' item(s) need review - expand System Health for detail'):'&#10003; All systems healthy - signals current - no pending actions';document.getElementById('accounting').innerHTML=ORDER.map(function(k){var a=((x.sources[k]||{}).data||{}).accounting||{};return '<strong>'+NAMES[k]+'</strong> - Today '+money(a.realised_today_gbp)+' / Week '+money(a.realised_week_gbp)+' / Month '+money(a.realised_month_gbp)+' / All time '+money(a.realised_all_time_gbp)}).join('<br>');document.getElementById('exposure').innerHTML=ORDER.map(function(k){var d=((x.sources[k]||{}).data||{}),b=d.basket||{};return '<strong>'+NAMES[k]+'</strong> - '+intval(b.open_trades)+' open / risk '+money(d.risk_per_trade_gbp)+' / basket '+money(b.pnl_gbp)+' / HWM '+money(b.high_water_gbp)+' / giveback '+money(b.giveback_gbp)}).join('<br>');document.getElementById('health').innerHTML=ORDER.map(function(k){var s=x.sources[k]||{},d=s.data||{},h=d.health||{},sig=s.signal||{},err=s.error?(' / '+s.error):'';return '<strong>'+NAMES[k]+'</strong> - service '+(s.ok&&!s.stale&&s.contract_match!==false?'OK':s.contract_match===false?'SCHEMA MISMATCH':s.stale?'STALE':'DEGRADED')+' / broker '+(h.broker_ok===false?'FAIL':'OK')+' / DB '+(h.database_ok===false?'FAIL':'OK')+' / worker '+(h.worker_ok===false?'FAIL':'OK')+' / signal '+(sig.status||'UNKNOWN')+' / build '+(s.reported_build||'-')+' / schema '+(s.reported_schema_version??'-')+'/'+(s.required_schema_version??'-')+' / last good '+when(s.last_good_at_utc)+err}).join('<br>');document.getElementById('topStatus').textContent='Portfolio Hub v'+(x.version||'0.6.1')+' / last refresh '+when(x.generated_at_utc)+' / auto-refresh 20s'}catch(e){document.getElementById('topStatus').textContent='Portfolio Hub API unavailable: '+e}}
+async function load(){try{var res=await fetch('/api/aggregate',{cache:'no-store'}),x=await res.json(),p=x.portfolio||{},scope=(p.scope||[]).map(function(k){return NAMES[k]||k}).join(' + ');document.getElementById('portfolioScope').innerHTML='LIVE scope: <strong>'+(scope||'none')+'</strong> / open risk '+money(p.open_risk_estimate_gbp)+' / refreshed '+when(x.generated_at_utc);document.getElementById('headline').innerHTML=[card('Portfolio NAV',money(p.nav_gbp),'Freshest '+(NAMES[p.nav_source]||p.nav_source||'source')),card('Open P&L','<span class="'+cls(p.unrealised_pnl_gbp)+'">'+money(p.unrealised_pnl_gbp)+'</span>',p.unrealised_pnl_complete?'All live open positions, including XAG SHORT':'Incomplete broker snapshots — not a total'),card('Today realised','<span class="'+cls(p.realised_today_gbp)+'">'+money(p.realised_today_gbp)+'</span>','Known realised · XAG SHORT ledger pending'),card('Week realised','<span class="'+cls(p.realised_week_gbp)+'">'+money(p.realised_week_gbp)+'</span>','Live strategies only'),card('Month total','<span class="'+cls(p.month_total_gbp)+'">'+money(p.month_total_gbp)+'</span>','Realised '+money(p.realised_month_gbp)+' + open '+money(p.unrealised_pnl_gbp)),card('All-time realised','<span class="'+cls(p.realised_all_time_gbp)+'">'+money(p.realised_all_time_gbp)+'</span>','Known realised · XAG SHORT ledger pending'),card('Observed drawdown',money(p.drawdown_gbp),'NAV HWM '+money(p.nav_high_water_gbp)+' / since Hub process start'),card('Open risk estimate',money(p.open_risk_estimate_gbp),p.open_risk_estimate_complete?'Open trades x approved risk':'Partial estimate · XAG SHORT pilot risk excluded')].join('');document.getElementById('strategies').innerHTML=ORDER.map(function(k){return strategyHtml(k,x.sources[k]||{},x.strategy_lane_notes||{})}).join('');renderAttention(x.attention);renderActivity(x.recent_activity);renderRisk(x.risk_review);var att=(x.attention||{}).items||[];var hb=document.getElementById('healthBar');hb.className=att.some(function(a){return a.severity==='bad'})?'badbar':att.length?'warnbar':'healthbar';hb.innerHTML=att.length?(att.length+' item(s) need review - expand System Health for detail'):'&#10003; All systems healthy - signals current - no pending actions';document.getElementById('accounting').innerHTML=ORDER.map(function(k){var a=((x.sources[k]||{}).data||{}).accounting||{};return '<strong>'+NAMES[k]+'</strong> - Today '+money(a.realised_today_gbp)+' / Week '+money(a.realised_week_gbp)+' / Month '+money(a.realised_month_gbp)+' / All time '+money(a.realised_all_time_gbp)+(k==='metals'?' (XAU only; XAG Short ledger pending)':'')}).join('<br>');document.getElementById('exposure').innerHTML=ORDER.map(function(k){var d=((x.sources[k]||{}).data||{}),b=d.basket||{};return '<strong>'+NAMES[k]+'</strong> - '+intval(b.open_trades)+' open'+(k==='metals'?' (XAU '+intval(b.live_xau_open_count)+' + XAG SHORT '+intval(b.live_xag_short_open_count)+')':'')+' / risk '+money(d.risk_per_trade_gbp)+(k==='metals'?' (XAU base only)':'')+' / basket '+money(b.pnl_gbp)+' / HWM '+money(b.high_water_gbp)+(k==='metals'?' (XAU only)':'')+' / giveback '+money(b.giveback_gbp)+(k==='metals'?' (XAU only)':'')}).join('<br>');document.getElementById('health').innerHTML=ORDER.map(function(k){var s=x.sources[k]||{},d=s.data||{},h=d.health||{},sig=s.signal||{},err=s.error?(' / '+s.error):'';return '<strong>'+NAMES[k]+'</strong> - service '+(s.ok&&!s.stale&&s.contract_match!==false?'OK':s.contract_match===false?'SCHEMA MISMATCH':s.stale?'STALE':'DEGRADED')+' / broker '+(h.broker_ok===false?'FAIL':'OK')+' / DB '+(h.database_ok===false?'FAIL':'OK')+' / worker '+(h.worker_ok===false?'FAIL':'OK')+' / signal '+(sig.status||'UNKNOWN')+' / build '+(s.reported_build||'-')+' / schema '+(s.reported_schema_version??'-')+'/'+(s.required_schema_version??'-')+' / last good '+when(s.last_good_at_utc)+err}).join('<br>');document.getElementById('topStatus').textContent='Portfolio Hub v'+(x.version||'0.6.1')+' / last refresh '+when(x.generated_at_utc)+' / auto-refresh 20s'}catch(e){document.getElementById('topStatus').textContent='Portfolio Hub API unavailable: '+e}}
 async function loadAiObserverWatchdog(){try{var r=await fetch('/api/ai-observer-watchdog',{cache:'no-store'}),d=await r.json(),rows=d.sources||{},bad=Object.keys(rows).filter(function(k){return rows[k].state!=='OK'}),bar=document.getElementById('aiObserverWarning');if(bar){bar.style.display=bad.length?'block':'none';bar.textContent=bad.length?'AI OBSERVER WARNING: '+bad.map(function(k){return k.toUpperCase()+' '+rows[k].state+' '+(rows[k].alerts||[]).join(', ')}).join(' | '):'AI Observers healthy'}}catch(e){var bar=document.getElementById('aiObserverWarning');if(bar){bar.style.display='block';bar.textContent='AI OBSERVER MONITOR UNAVAILABLE'}}}
 loadAiObserverWatchdog();setInterval(loadAiObserverWatchdog,60000);
 load();loadResearch();setInterval(load,20000);setInterval(loadResearch,60000);
