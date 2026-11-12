@@ -10,6 +10,7 @@ from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, Optional
 
 from financial_review import financial_review_line
+import hub_metals_live_positions_bridge as metals_live
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 
@@ -237,6 +238,16 @@ def validate_summary(key: str, payload: Any) -> Dict[str, Any]:
     }
 
 
+def fetch_metals_live_positions(base: str, headers: Dict[str, str]) -> Dict[str, Any]:
+    """Fetch current LIVE broker-backed XAU+XAG, not demo or historical estimates."""
+    req = urllib.request.Request(base + "/api/live-metals-open-positions", headers=headers, method="GET")
+    with urllib.request.urlopen(req, timeout=SOURCE_TIMEOUT_SECONDS) as resp:
+        if int(getattr(resp, "status", 200)) != 200:
+            raise RuntimeError("LIVE Metals open positions HTTP error")
+        payload = json.loads(resp.read().decode("utf-8"))
+    return metals_live.verify(payload, max_age_seconds=STALE_AFTER_SECONDS)
+
+
 def fetch_metals_lane_accounting(base: str, headers: Dict[str, str]) -> Dict[str, Any]:
     """Optional, read-only producer probe; never promote unverified P&L."""
     req = urllib.request.Request(base + "/api/live-metals-lane-accounting", headers=headers, method="GET")
@@ -296,6 +307,14 @@ def fetch_source(key: str) -> Dict[str, Any]:
                 validated["accounting"]["lane_reporting_status"] = str(lane_payload.get("reporting_status") or "awaiting_reconciliation")
         except Exception:
             validated["accounting"]["lane_reporting_status"] = "producer_unavailable"
+        # The original /api/portfolio-summary basket is XAU-only. The only
+        # accepted Metals open P&L/count comes from the reconciled LIVE XAU +
+        # LIVE XAG Short broker data, not the XAG practice basket.
+        try:
+            proof = fetch_metals_live_positions(base, headers)
+            metals_live.apply(validated, proof)
+        except Exception as exc:
+            metals_live.mark_incomplete(validated, f"{type(exc).__name__}: {exc}")
     return validated
 
 
@@ -618,11 +637,13 @@ def aggregate_snapshot() -> Dict[str, Any]:
     drawdown = (nav_hwm - nav) if nav is not None and nav_hwm is not None else None
 
     pnl_values = [
-        d["basket"].get("pnl_gbp")
+        d.get("basket", {}).get("pnl_gbp")
         for d in live_values
-        if d.get("basket", {}).get("pnl_gbp") is not None
     ]
-    total_unrealised = sum(pnl_values) if pnl_values else None
+    open_pnl_complete = bool(live_values) and all(v is not None for v in pnl_values)
+    total_unrealised = sum(pnl_values) if open_pnl_complete else None
+    if not open_pnl_complete:
+        portfolio_warnings.append("live open P&L unavailable for one or more strategies")
 
     def sum_accounting(field: str) -> Optional[float]:
         values = [safe_float((d.get("accounting") or {}).get(field)) for d in live_values]
@@ -634,15 +655,24 @@ def aggregate_snapshot() -> Dict[str, Any]:
     realised_month = sum_accounting("realised_month_gbp")
     realised_all_time = sum_accounting("realised_all_time_gbp")
     month_total = (
-        (realised_month or 0.0) + (total_unrealised or 0.0)
-        if realised_month is not None or total_unrealised is not None
+        realised_month + total_unrealised
+        if realised_month is not None and total_unrealised is not None
         else None
     )
 
     open_risk_values = []
-    for d in live_values:
-        count = d.get("basket", {}).get("open_trades")
+    risk_scope_warnings = []
+    for key, d, _view in live_rows:
+        basket = d.get("basket", {})
+        count = basket.get("open_trades")
         risk = d.get("risk_per_trade_gbp")
+        if key == "metals":
+            # The fixed Metals risk value is XAU's base request, not XAG's
+            # separately sized one-unit pilot. Never multiply XAG positions
+            # by XAU per-trade risk; show a partial estimate explicitly.
+            count = basket.get("xau_only_open_trades")
+            if (basket.get("live_xag_short_open_count") or 0) > 0:
+                risk_scope_warnings.append("Metals XAG Short pilot risk excluded")
         if count is not None and risk is not None:
             open_risk_values.append(max(0, count) * max(0.0, risk))
     open_risk = sum(open_risk_values) if open_risk_values else None
@@ -695,12 +725,16 @@ def aggregate_snapshot() -> Dict[str, Any]:
         "nav_tolerance_gbp": nav_tolerance_gbp,
         "nav_disagreement": nav_disagreement,
         "unrealised_pnl_gbp": total_unrealised,
+        "unrealised_pnl_complete": open_pnl_complete,
+        "metals_realised_scope": "XAU_ONLY_XAG_SHORT_LEDGER_PENDING",
         "realised_today_gbp": realised_today,
         "realised_week_gbp": realised_week,
         "realised_month_gbp": realised_month,
         "realised_all_time_gbp": realised_all_time,
         "month_total_gbp": month_total,
         "open_risk_estimate_gbp": open_risk,
+        "open_risk_estimate_complete": not bool(risk_scope_warnings),
+        "open_risk_estimate_warnings": risk_scope_warnings,
         "nav_high_water_gbp": nav_hwm,
         "drawdown_gbp": drawdown,
         "drawdown_scope": "hub_observed_since_process_start",
