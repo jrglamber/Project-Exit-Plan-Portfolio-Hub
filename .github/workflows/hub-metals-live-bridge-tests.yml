@@ -4,6 +4,8 @@ on:
     paths:
       - 'app.py'
       - 'hub_metals_live_positions_bridge.py'
+      - 'hub_metals_combined_observed_hwm.py'
+      - 'test_hub_metals_combined_observed_hwm.py'
       - 'hub_metals_candidate_support_overlay.py'
       - 'hub_entrypoint.py'
       - 'test_hub_metals_live_bridge.py'
@@ -13,6 +15,8 @@ on:
     paths:
       - 'app.py'
       - 'hub_metals_live_positions_bridge.py'
+      - 'hub_metals_combined_observed_hwm.py'
+      - 'test_hub_metals_combined_observed_hwm.py'
       - 'hub_metals_candidate_support_overlay.py'
       - 'hub_entrypoint.py'
       - 'test_hub_metals_live_bridge.py'
@@ -29,5 +33,5 @@ jobs:
           python-version: '3.11'
       - name: Check compiled code and pure live-accounting regressions
         run: |
-          python -m py_compile app.py hub_entrypoint.py hub_metals_candidate_support_overlay.py hub_metals_live_positions_bridge.py test_hub_metals_live_bridge.py
-          python -m unittest -v test_hub_metals_live_bridge
+          python -m py_compile hub_metals_combined_observed_hwm.py test_hub_metals_combined_observed_hwm.py app.py hub_entrypoint.py hub_metals_candidate_support_overlay.py hub_metals_live_positions_bridge.py test_hub_metals_live_bridge.py
+          python -m unittest -v test_hub_metals_combined_observed_hwm test_hub_metals_live_bridge
