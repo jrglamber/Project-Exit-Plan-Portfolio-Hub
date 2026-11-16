@@ -11,6 +11,7 @@ from typing import Any, Dict, Optional
 
 from financial_review import financial_review_line
 import hub_metals_live_positions_bridge as metals_live
+import hub_metals_combined_observed_hwm as metals_hwm
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 
@@ -248,6 +249,18 @@ def fetch_metals_live_positions(base: str, headers: Dict[str, str]) -> Dict[str,
     return metals_live.verify(payload, max_age_seconds=STALE_AFTER_SECONDS)
 
 
+def fetch_metals_combined_high_water(base: str, headers: Dict[str, str]) -> Dict[str, Any]:
+    """Read the separate producer-persisted peak of combined LIVE open P&L."""
+    req = urllib.request.Request(base + "/api/live-metals-open-pnl", headers=headers, method="GET")
+    with urllib.request.urlopen(req, timeout=SOURCE_TIMEOUT_SECONDS) as resp:
+        if int(getattr(resp,"status",200)) != 200:
+            raise RuntimeError("LIVE Metals combined peak HTTP error")
+        payload=json.loads(resp.read().decode("utf-8"))
+    if not isinstance(payload,dict):
+        raise ValueError("LIVE Metals combined high-water payload invalid")
+    return payload
+
+
 def fetch_metals_lane_accounting(base: str, headers: Dict[str, str]) -> Dict[str, Any]:
     """Optional, read-only producer probe; never promote unverified P&L."""
     req = urllib.request.Request(base + "/api/live-metals-lane-accounting", headers=headers, method="GET")
@@ -313,8 +326,17 @@ def fetch_source(key: str) -> Dict[str, Any]:
         try:
             proof = fetch_metals_live_positions(base, headers)
             metals_live.apply(validated, proof)
+            try:
+                peak = fetch_metals_combined_high_water(base, headers)
+                observed = metals_hwm.verify(peak, proof, max_age_seconds=STALE_AFTER_SECONDS)
+                metals_hwm.apply(validated, observed)
+            except Exception as exc:
+                # Missing combined history must never be replaced with an
+                # incorrectly-labelled XAU-only historical peak.
+                metals_hwm.mark_unavailable(validated, f"{type(exc).__name__}: {exc}")
         except Exception as exc:
             metals_live.mark_incomplete(validated, f"{type(exc).__name__}: {exc}")
+            metals_hwm.mark_unavailable(validated, "LIVE combined broker positions unverified")
     return validated
 
 
@@ -875,15 +897,18 @@ function strategyHtml(key,s,notes){
  var lane=(notes||{})[key]||'', isMetals=key==='metals', liveMetals=isMetals&&b.live_positions_status==='BROKER_VERIFIED';
  var riskPct=(num(d.risk_per_trade_gbp)!==null&&num(d.nav_gbp))?pct(num(d.risk_per_trade_gbp)/num(d.nav_gbp)*100):'-';
  var next=(em.next_cycle_manager&&em.next_cycle_manager!==em.current_manager)?' / next '+em.next_cycle_manager:'';
- var pnlNote=isMetals?(liveMetals?'LIVE XAU + XAG SHORT · XAU-only '+rr(b.xau_only_pnl_r):'LIVE Metals broker data unavailable'):rr(b.pnl_r);
+ var pnlNote=isMetals?(liveMetals?'Broker-verified LIVE XAU + XAG SHORT':'LIVE Metals broker data unavailable'):rr(b.pnl_r);
+ var combinedPeak=isMetals&&b.combined_high_water_status==='OBSERVED_COMBINED_LIVE';
+ var peakNote=isMetals?(combinedPeak?'Observed since '+when(b.high_water_tracking_started_at_utc)+' · peaked '+when(b.high_water_at_utc)+' · XAU protection separate':'Combined peak not yet available'):rr(b.high_water_r)+' / '+when(b.high_water_at_utc);
+ var giveNote=isMetals?(combinedPeak?'From combined observed peak'+(num(b.giveback_pct)===null?'':' · '+num(b.giveback_pct).toFixed(1)+'%'):'Combined giveback not yet available'):rr(b.giveback_r);
  var countNote=isMetals?(liveMetals?'LIVE XAU '+intval(b.live_xau_open_count)+' · LIVE XAG SHORT '+intval(b.live_xag_short_open_count)+' · Last opened '+when(b.last_trade_opened_at_utc):'LIVE Metals broker count unavailable'):'Last opened '+when(b.last_trade_opened_at_utc);
  return '<div class="strategy"><div class="strategy-head"><div><div class="strategy-title">'+NAMES[key]+'</div><div class="lane">'+lane+
  '</div></div><div class="badges"><span class="badge">'+mode+'</span><span class="badge">'+status+(dir?' / '+dir:'')+'</span>'+stateBadge(s)+'</div></div><div class="grid cards">'+
- card(isMetals?'Open P&L · LIVE XAU + XAG':'Open P&L','<span class="'+cls(b.pnl_gbp)+'">'+money(b.pnl_gbp)+'</span>',pnlNote)+
+ card(isMetals?'Broker P&L · LIVE XAU + XAG SHORT':'Open P&L','<span class="'+cls(b.pnl_gbp)+'">'+money(b.pnl_gbp)+'</span>',pnlNote)+
  card('Realised W / M',money(a.realised_week_gbp),'Month '+money(a.realised_month_gbp)+(isMetals?' · XAU-only; XAG ledger pending':''))+
  card('All-time realised',money(a.realised_all_time_gbp),'Today '+money(a.realised_today_gbp)+(isMetals?' · XAU only':''))+
- card(isMetals?'High water · XAU only':'High water',money(b.high_water_gbp),rr(b.high_water_r)+' / '+when(b.high_water_at_utc))+
- card(isMetals?'Giveback · XAU only':'Giveback',money(b.giveback_gbp),rr(b.giveback_r))+
+ card(isMetals?'High water · LIVE XAU + XAG SHORT':'High water',money(b.high_water_gbp),peakNote)+
+ card(isMetals?'Giveback · LIVE XAU + XAG SHORT':'Giveback',money(b.giveback_gbp),giveNote)+
  card('Open trades',intval(b.open_trades),countNote)+
  card('Approved risk / trade',money(d.risk_per_trade_gbp),riskPct+' of NAV'+(isMetals?' · XAU base; XAG pilot separate':''))+
  card('Manager',em.current_manager||'-',next+(em.pending_broker_actions?' / '+em.pending_broker_actions+' pending':''))+
