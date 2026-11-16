@@ -30,8 +30,10 @@ def verify():
         raise AssertionError("Actual Hub page still has old XAU-only Metals tile script")
     if "LIVE XAU + XAG" not in page:
         raise AssertionError("Actual Hub page missing combined LIVE Metals P&L label")
-    if "High water · XAU only" not in page:
-        raise AssertionError("XAU-only HWM not separately labelled")
+    if "High water · LIVE XAU + XAG SHORT" not in page:
+        raise AssertionError("Hub combined observed high-water tile missing")
+    if "Giveback · LIVE XAU + XAG SHORT" not in page:
+        raise AssertionError("Hub combined observed giveback tile missing")
 
     snap=json.loads(get("/api/aggregate"))
     metals=((snap.get("sources") or {}).get("metals") or {}).get("data") or {}
@@ -54,8 +56,20 @@ def verify():
         raise AssertionError("Hub Metals P&L differs from its broker-verified combined P&L")
     if basket.get("pnl_r") is not None:
         raise AssertionError("Mixed XAU/XAG basket R erroneously computed from XAU only")
-    if basket.get("high_water_scope")!="LIVE_XAU_ONLY":
-        raise AssertionError("Hub incorrectly treats XAU high-water as all-Metals")
+    combined_hwm=metals.get("live_metals_high_water") or {}
+    if (not combined_hwm.get("ok") or
+        basket.get("combined_high_water_status")!="OBSERVED_COMBINED_LIVE" or
+        basket.get("high_water_scope")!="LIVE_XAU_PLUS_XAG_SHORT_OBSERVED_SINCE_START"):
+        raise AssertionError("Hub combined observed Metals high-water unavailable")
+    if basket.get("xau_only_high_water_gbp") is None:
+        raise AssertionError("Hub lost separate XAU protection high-water")
+    if basket.get("high_water_r") is not None or basket.get("giveback_r") is not None:
+        raise AssertionError("Combined Metals wrongly reused XAU-only R")
+    if abs(float(basket["giveback_gbp"]) -
+           max(0.0,float(basket["high_water_gbp"])-float(basket["pnl_gbp"])))>0.02:
+        raise AssertionError("Combined high-water, broker P&L and giveback do not reconcile")
+    if not basket.get("high_water_tracking_started_at_utc"):
+        raise AssertionError("Hub combined high-water observation baseline missing")
     if (metals.get("accounting") or {}).get("realised_scope")!="LIVE_XAU_ONLY_XAG_LEDGER_PENDING":
         raise AssertionError("Unreconciled XAG realised ledger not disclosed")
 
@@ -78,7 +92,7 @@ def verify():
     if tile.get("open_count")!=tile.get("xau_count")+tile.get("xag_short_count"):
         raise AssertionError("Metals tile lacks XAG Short positions")
 
-    print(f"PASS: served Hub HTML uses combined Metals feed; LIVE XAU={xau}, XAG_SHORT={xag}, total={combined}; broker-verified all-live P&L; XAU-only historical figures; XAG risk correctly flagged partial.")
+    print(f"PASS: served Hub HTML uses combined Metals feed; LIVE XAU={xau}, XAG_SHORT={xag}, total={combined}; broker-verified all-live P&L; combined observed high-water + giveback; XAU historical/harvest HWM preserved; XAG risk flagged partial.")
 
 
 def main():
