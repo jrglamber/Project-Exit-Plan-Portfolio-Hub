@@ -42,7 +42,7 @@ def _sync_html(text: str) -> str:
         "(p.live_risk_endpoint_complete?((p.live_risk_unquantified_trade_count||0)>0?"
         "('⚠ '+p.live_risk_unquantified_trade_count+' trade(s) unquantified · open P&L now '+money(p.unrealised_pnl_gbp)):"
         "('Open P&L now '+money(p.unrealised_pnl_gbp)+' · '+(p.live_risk_total_trade_count||0)+' current broker stop(s) · before gaps/slippage'"
-        "+'<br><strong>NAV if all stops hit: '+money((p.nav_gbp==null||p.live_stop_floor_pnl_gbp==null)?null:(Number(p.nav_gbp)+Number(p.live_stop_floor_pnl_gbp)))+'</strong>')):"
+        "+'<br><strong>Projected NAV at stops: '+money((p.nav_gbp==null||p.unrealised_pnl_gbp==null||p.live_stop_floor_pnl_gbp==null||p.unrealised_pnl_complete!==true||p.live_stop_floor_complete!==true)?null:(Number(p.nav_gbp)-Number(p.unrealised_pnl_gbp)+Number(p.live_stop_floor_pnl_gbp)))+'</strong> · estimate before gaps/slippage')):"
         "('Telemetry unavailable: '+((p.live_risk_endpoint_failures||[]).join(', ')||'producer error'))))"
     )
 

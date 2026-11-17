@@ -95,6 +95,17 @@ class StopFloorScopeTests(unittest.TestCase):
         a=guard_stop_floor_coverage(fixture(open_count=0,risk_count=0))
         self.assertTrue(a["portfolio"]["live_stop_floor_scope_complete"])
 
+    def test_projected_nav_replaces_current_upl_before_adding_stop_floor(self):
+        from pathlib import Path
+        code=Path("hub_tile_order_overlay.py").read_text(encoding="utf-8")
+        self.assertIn("Number(p.nav_gbp)-Number(p.unrealised_pnl_gbp)+Number(p.live_stop_floor_pnl_gbp)",code)
+        self.assertIn("p.unrealised_pnl_complete!==true",code)
+        self.assertIn("p.live_stop_floor_complete!==true",code)
+        self.assertIn("Projected NAV at stops:",code)
+        self.assertNotIn("Number(p.nav_gbp)+Number(p.live_stop_floor_pnl_gbp)",code)
+        # NAV already includes current unrealised P&L.
+        self.assertAlmostEqual(5439.06 - 13.57 - 136.43, 5289.06)
+
     def test_no_metals_does_not_mutate_other_strategies(self):
         a={"sources":{"indices":{"data":{"mode":"live"}}},
            "portfolio":{"live_stop_floor_pnl_gbp":-10}}
