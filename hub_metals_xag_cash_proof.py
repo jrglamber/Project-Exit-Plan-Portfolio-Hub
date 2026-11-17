@@ -46,13 +46,22 @@ def combine_xau_xag(validated, lane_payload, now=None):
     source=validated.get("accounting")
     if not isinstance(source,dict):
         raise ValueError("Metals canonical XAU accounting missing")
+    if source.get("xag_short_broker_net_verified") or (
+            "XAG_SHORT" in str(source.get("realised_scope") or "").upper()):
+        raise ValueError("XAG cash already included in canonical summary")
+    # The producer sometimes reports None for today's XAU P&L (unavailable),
+    # even when XAU week/month/all-time aggregates are known. Preserve that
+    # unknown instead of silently assuming zero or blocking other periods.
     results={}
     for field in FIELDS:
         xau_amount=number(source.get(field))
         xag_amount=number(xag.get(field))
-        if xau_amount is None or xag_amount is None:
-            raise ValueError("XAU or XAG net GBP amount unavailable: "+field)
-        results[field]=(xau_amount,xag_amount,round(xau_amount+xag_amount,4))
+        if xag_amount is None:
+            raise ValueError("XAG net GBP proof missing: "+field)
+        if xau_amount is None and field!="realised_today_gbp":
+            raise ValueError("XAU realised amount unavailable: "+field)
+        results[field]=(xau_amount,xag_amount,
+                        round(xau_amount+xag_amount,4) if xau_amount is not None else None)
     for field,(xau,xag_amount,combined) in results.items():
         source["xau_only_"+field]=xau
         source["xag_short_"+field]=xag_amount
