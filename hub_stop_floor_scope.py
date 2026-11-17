@@ -46,12 +46,12 @@ def guard_stop_floor_coverage(snapshot):
     instrument_coverage=(
         xau_expected is not None and xag_expected is not None
         and xau_expected + xag_expected == expected
-        and _count(xau.get("open_trade_count")) == xau_expected
-        and _count(xag.get("open_trade_count")) == xag_expected
-        and _count(xag.get("short_trade_count")) == xag_expected
-        and _count(xag.get("long_trade_count")) == 0
-        and _count(xau.get("quantified_trade_count")) == xau_expected
-        and _count(xag.get("quantified_trade_count")) == xag_expected
+        and _count(xau.get("open_trade_count", 0 if xau_expected==0 else None)) == xau_expected
+        and _count(xag.get("open_trade_count", 0 if xag_expected==0 else None)) == xag_expected
+        and _count(xag.get("short_trade_count", 0 if xag_expected==0 else None)) == xag_expected
+        and _count(xag.get("long_trade_count", 0)) == 0
+        and _count(xau.get("quantified_trade_count", 0 if xau_expected==0 else None)) == xau_expected
+        and _count(xag.get("quantified_trade_count", 0 if xag_expected==0 else None)) == xag_expected
     )
     status=("COMPLETE" if (verified and expected is not None
             and counted == expected and quantified == expected
