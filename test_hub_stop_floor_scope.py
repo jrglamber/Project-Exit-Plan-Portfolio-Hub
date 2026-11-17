@@ -46,6 +46,12 @@ class StopFloorScopeTests(unittest.TestCase):
         self.assertIsNone(a["portfolio"]["live_stop_floor_pnl_gbp"])
         self.assertFalse(a["portfolio"]["live_stop_floor_scope_complete"])
 
+    def test_final_headline_layout_does_not_mislabel_partial_floor(self):
+        from pathlib import Path
+        content=Path("hub_tile_order_overlay.py").read_text(encoding="utf-8")
+        self.assertIn("p.live_stop_floor_scope_complete===false?'Stop-floor incomplete'",content)
+        self.assertIn("p.live_stop_floor_pnl_gbp==null",content)
+
     def test_flat_scope_with_zero_stops_is_complete(self):
         a=guard_stop_floor_coverage(fixture(open_count=0,risk_count=0))
         self.assertTrue(a["portfolio"]["live_stop_floor_scope_complete"])
