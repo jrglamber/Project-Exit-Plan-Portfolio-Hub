@@ -1,0 +1,32 @@
+name: Hub verified XAG Short net GBP live realised audit
+on:
+  pull_request:
+    paths:
+      - 'app.py'
+      - 'hub_metals_xag_cash_proof.py'
+      - 'test_hub_metals_xag_cash_proof.py'
+      - 'smoke_hub_xag_realised.py'
+      - '.github/workflows/hub-xag-realised.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'app.py'
+      - 'hub_metals_xag_cash_proof.py'
+      - 'test_hub_metals_xag_cash_proof.py'
+      - 'smoke_hub_xag_realised.py'
+      - '.github/workflows/hub-xag-realised.yml'
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python -m py_compile app.py hub_metals_xag_cash_proof.py test_hub_metals_xag_cash_proof.py smoke_hub_xag_realised.py
+      - run: python -m unittest -v test_hub_metals_xag_cash_proof
+      - name: Production Hub net-GBP audit
+        if: github.event_name != 'pull_request'
+        run: python smoke_hub_xag_realised.py
