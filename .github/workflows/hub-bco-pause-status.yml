@@ -1,0 +1,43 @@
+name: Hub BCO live entry-pause status checks
+on:
+  pull_request:
+    paths:
+      - 'app.py'
+      - 'hub_bco_pause_contract.py'
+      - 'test_hub_bco_pause_contract.py'
+      - 'smoke_hub_bco_pause.py'
+      - '.github/workflows/hub-bco-pause-status.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'app.py'
+      - 'hub_bco_pause_contract.py'
+      - 'test_hub_bco_pause_contract.py'
+      - 'smoke_hub_bco_pause.py'
+      - '.github/workflows/hub-bco-pause-status.yml'
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python -m py_compile hub_bco_pause_contract.py app.py smoke_hub_bco_pause.py
+      - run: python -m unittest -v test_hub_bco_pause_contract
+      - name: Probe BCO pause endpoint
+        run: |
+          python - <<'PY'
+          import json,urllib.request
+          from hub_bco_pause_contract import verify_bco_pause
+          url='https://bco-live-production.up.railway.app/bco-live-entry-pause-v2'
+          with urllib.request.urlopen(url,timeout=20) as r:
+              d=json.load(r)
+          p=verify_bco_pause(d)
+          print('PASS: BCO producer pause endpoint available, paused='+str(p['paused']))
+          PY
+      - name: Production Hub matches BCO after deployment
+        if: github.event_name != 'pull_request'
+        run: python smoke_hub_bco_pause.py
