@@ -36,6 +36,7 @@ class LiveMetalsBridgeTests(unittest.TestCase):
     def test_combined_live_count_and_cash_pnl(self):
         proof=bridge.verify(positions())
         self.assertEqual(proof["open_count"],5)
+        self.assertEqual(proof["broker_trade_ids"],["xag1","xag2","xag3","xau1","xau2"])
         self.assertEqual(proof["xau_count"],2)
         self.assertEqual(proof["xag_short_count"],3)
         self.assertAlmostEqual(proof["open_pnl_gbp"],15.9)

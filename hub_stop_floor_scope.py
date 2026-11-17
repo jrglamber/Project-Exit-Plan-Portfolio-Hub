@@ -26,21 +26,55 @@ def guard_stop_floor_coverage(snapshot):
     basket=metals.get("basket") or {}
     expected=_count(basket.get("open_trades"))
     counted=_count(metals.get("live_risk_open_trade_count"))
-    verified=basket.get("live_positions_status")=="BROKER_VERIFIED"
-    status="COMPLETE" if verified and expected is not None and counted==expected else "INCOMPLETE"
+    quantified=_count(metals.get("live_risk_quantified_trade_count"))
+    verified=(basket.get("live_positions_status")=="BROKER_VERIFIED"
+              and metals.get("live_risk_ok") is True)
+    proof=metals.get("live_metals_positions") or {}
+    position_ids=proof.get("broker_trade_ids")
+    stop_ids=metals.get("live_risk_broker_trade_ids")
+    exact_ids=(isinstance(position_ids,list) and isinstance(stop_ids,list)
+               and len(position_ids)==len(stop_ids)
+               and len(set(map(str,position_ids)))==len(position_ids)
+               and len(set(map(str,stop_ids)))==len(stop_ids)
+               and all(str(x).strip() for x in position_ids+stop_ids)
+               and set(map(str,position_ids))==set(map(str,stop_ids)))
+    by=metals.get("live_risk_by_instrument") or {}
+    xau=by.get("XAU_USD") or {}
+    xag=by.get("XAG_USD") or {}
+    xau_expected=_count(basket.get("live_xau_open_count"))
+    xag_expected=_count(basket.get("live_xag_short_open_count"))
+    instrument_coverage=(
+        xau_expected is not None and xag_expected is not None
+        and xau_expected + xag_expected == expected
+        and _count(xau.get("open_trade_count", 0 if xau_expected==0 else None)) == xau_expected
+        and _count(xag.get("open_trade_count", 0 if xag_expected==0 else None)) == xag_expected
+        and _count(xag.get("short_trade_count", 0 if xag_expected==0 else None)) == xag_expected
+        and _count(xag.get("long_trade_count", 0)) == 0
+        and _count(xau.get("quantified_trade_count", 0 if xau_expected==0 else None)) == xau_expected
+        and _count(xag.get("quantified_trade_count", 0 if xag_expected==0 else None)) == xag_expected
+    )
+    status=("COMPLETE" if (verified and expected is not None
+            and counted == expected and quantified == expected
+            and exact_ids and instrument_coverage)
+            else "INCOMPLETE")
     p=snapshot.setdefault("portfolio",{})
     p["live_stop_floor_scope_status"]=status
     p["live_stop_floor_scope_complete"]=status=="COMPLETE"
     p["live_stop_floor_metals_position_count"]=expected
     p["live_stop_floor_metals_risk_count"]=counted
+    p["live_stop_floor_metals_quantified_count"]=quantified
+    p["live_stop_floor_metals_exact_trade_ids"]=exact_ids
+    p["live_stop_floor_metals_instrument_coverage"]=instrument_coverage
     if status=="COMPLETE":
         p["live_stop_floor_metals_excluded_count"]=0
         return snapshot
 
-    missing=max(0,expected-counted) if expected is not None and counted is not None else None
+    missing=max(0,expected-quantified) if expected is not None and quantified is not None else None
     p["live_stop_floor_metals_excluded_count"]=missing
-    reason=(f"Metals stop-floor coverage incomplete: {counted if counted is not None else '?'}"
-            f"/{expected if expected is not None else '?'} LIVE Metals broker positions covered")
+    reason=(f"Metals stop-floor coverage incomplete: {quantified if quantified is not None else '?'}"
+            f"/{expected if expected is not None else '?'} LIVE Metals broker positions stop-verified"
+            + ("; broker trade IDs mismatch" if not exact_ids else "")
+            + ("; instrument scope mismatch" if not instrument_coverage else ""))
     p["live_stop_floor_coverage_warning"]=reason
 
     # Retain the original quantified subset for audit, but NEVER present it as

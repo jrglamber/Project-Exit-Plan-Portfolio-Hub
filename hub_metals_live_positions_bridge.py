@@ -108,6 +108,7 @@ def verify(payload: Dict[str, Any], *, max_age_seconds: float = 120.0) -> Dict[s
         "ok": True, "version": VERSION,
         "scope": EXPECTED_SCOPE,
         "open_count": total,
+        "broker_trade_ids": sorted(ids),
         "xau_count": xau,
         "xag_short_count": xag,
         "open_pnl_gbp": round(xau_pnl+xag_pnl, 4),
