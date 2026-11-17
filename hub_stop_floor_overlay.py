@@ -18,6 +18,7 @@ from typing import Any, Dict
 from fastapi.responses import Response
 
 import hub_live_risk_overlay as base
+from hub_stop_floor_scope import guard_stop_floor_coverage
 
 app = base.app
 core = base.core
@@ -69,7 +70,10 @@ def aggregate_snapshot() -> Dict[str, Any]:
         "actual entry → current emergency/ratcheted stop × actual units, converted to GBP"
     )
     portfolio["live_stop_floor_caveat"] = "subject to market gaps/slippage and broker execution"
-    return snap
+    # The Metals risk endpoint may still quantify only XAU while live
+    # broker-verified positions include XAG SHORT. Suppress partial portfolio
+    # stop-floor figures rather than overstate protection.
+    return guard_stop_floor_coverage(snap)
 
 
 core.aggregate_snapshot = aggregate_snapshot
@@ -84,6 +88,13 @@ def _sync_html(text: str) -> str:
     # stop-out result. Open P&L is kept in the subtext for immediate context.
     old_card = "card((p.live_risk_complete?'Live capital at risk':(p.live_risk_endpoint_complete?'Known capital at risk':'Live capital at risk')),money(p.live_capital_risk_gbp),(p.live_risk_endpoint_complete?((p.live_risk_unquantified_trade_count||0)>0?('⚠ '+p.live_risk_unquantified_trade_count+' trade(s) unquantified · '+p.live_risk_quantified_trade_count+'/'+p.live_risk_total_trade_count+' quantified'):((p.live_risk_total_trade_count||0)+' broker trade(s) stop-backed · locked profit floor '+money(p.live_locked_profit_floor_gbp))):('Telemetry unavailable: '+((p.live_risk_endpoint_failures||[]).join(', ')||'producer error'))))"
     new_card = "card((p.live_stop_floor_complete?'If all stops hit':(p.live_risk_endpoint_complete?'Known stop-floor P&L':'If all stops hit')),('<span class=\"'+cls(p.live_stop_floor_pnl_gbp)+'\">'+money(p.live_stop_floor_pnl_gbp)+'</span>'),(p.live_risk_endpoint_complete?((p.live_risk_unquantified_trade_count||0)>0?('⚠ '+p.live_risk_unquantified_trade_count+' trade(s) unquantified · open P&L now '+money(p.unrealised_pnl_gbp)):('Open P&L now '+money(p.unrealised_pnl_gbp)+' · '+(p.live_risk_total_trade_count||0)+' current broker stop(s) · before gaps/slippage')):('Telemetry unavailable: '+((p.live_risk_endpoint_failures||[]).join(', ')||'producer error'))))"
+    # Report unknown (not a false partial cash floor) if XAG stops do not
+    # match the exact broker-verified Metals open position count.
+    new_card = new_card.replace(
+        "card((p.live_stop_floor_complete?",
+        "card((p.live_stop_floor_scope_complete===false?'Stop-floor incomplete':p.live_stop_floor_complete?",
+        1,
+    )
     out = out.replace(old_card, new_card)
 
     # Per-strategy risk-card subtext also uses the net stop-floor rather than
