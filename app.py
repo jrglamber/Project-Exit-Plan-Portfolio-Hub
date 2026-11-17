@@ -286,6 +286,20 @@ def fetch_source(key: str) -> Dict[str, Any]:
         if int(getattr(resp, "status", 200)) != 200:
             raise RuntimeError(f"HTTP {getattr(resp, 'status', 'error')}")
     validated = validate_summary(key, json.loads(raw.decode("utf-8")))
+    if key == "bco":
+        # The production BCO new-entry pause is independent of service health.
+        try:
+            from hub_bco_pause_contract import verify_bco_pause
+            request_pause = urllib.request.Request(
+                base + "/bco-live-entry-pause-v2", headers=headers, method="GET")
+            with urllib.request.urlopen(request_pause, timeout=min(SOURCE_TIMEOUT_SECONDS, 2.0)) as reply_pause:
+                result_pause = json.loads(reply_pause.read().decode("utf-8"))
+            validated["entry_pause"] = verify_bco_pause(result_pause)
+        except Exception as exc:
+            validated["entry_pause"] = {
+                "ok": False, "paused": None,
+                "error": f"{type(exc).__name__}: {exc}"[:160],
+            }
     if key == "metals":
         # An optional probe failure must not take down canonical reporting.
         try:
@@ -922,7 +936,11 @@ function card(label,val,sub){return '<div class="card"><div class="label">'+labe
 function strategyHtml(key,s,notes){
  var d=s.data||{}, b=d.basket||{}, a=d.accounting||{}, em=d.exit_management||{};
  var mode=(d.mode||'unknown').toUpperCase(), status=(d.status||'UNKNOWN').toUpperCase(), dir=(b.direction||'').toUpperCase();
+ var bcoPause=key==='bco'?(d.entry_pause||{}):null;
+ var pauseVerified=key==='bco'&&bcoPause&&bcoPause.ok===true&&typeof bcoPause.paused==='boolean';
+ var entryBadge=key==='bco'?(pauseVerified?(bcoPause.paused?'NEW ENTRIES PAUSED':status+(dir?' / '+dir:'')):'ENTRY PAUSE UNKNOWN'):(status+(dir?' / '+dir:''));
  var lane=(notes||{})[key]||'', isMetals=key==='metals', liveMetals=isMetals&&b.live_positions_status==='BROKER_VERIFIED';
+ if(key==='bco'&&pauseVerified&&bcoPause.paused)lane+=' · New live entries blocked; research and existing-position management continue';
  var riskPct=(num(d.risk_per_trade_gbp)!==null&&num(d.nav_gbp))?pct(num(d.risk_per_trade_gbp)/num(d.nav_gbp)*100):'-';
  var next=(em.next_cycle_manager&&em.next_cycle_manager!==em.current_manager)?' / next '+em.next_cycle_manager:'';
  var pnlNote=isMetals?(liveMetals?'Broker-verified LIVE XAU + XAG SHORT':'LIVE Metals broker data unavailable'):rr(b.pnl_r);
@@ -931,7 +949,7 @@ function strategyHtml(key,s,notes){
  var giveNote=isMetals?(combinedPeak?'From combined observed peak'+(num(b.giveback_pct)===null?'':' · '+num(b.giveback_pct).toFixed(1)+'%'):'Combined giveback not yet available'):rr(b.giveback_r);
  var countNote=isMetals?(liveMetals?'LIVE XAU '+intval(b.live_xau_open_count)+' · LIVE XAG SHORT '+intval(b.live_xag_short_open_count)+' · Last opened '+when(b.last_trade_opened_at_utc):'LIVE Metals broker count unavailable'):'Last opened '+when(b.last_trade_opened_at_utc);
  return '<div class="strategy"><div class="strategy-head"><div><div class="strategy-title">'+NAMES[key]+'</div><div class="lane">'+lane+
- '</div></div><div class="badges"><span class="badge">'+mode+'</span><span class="badge">'+status+(dir?' / '+dir:'')+'</span>'+(isMetals&&(num(b.pnl_gbp)===null||b.combined_high_water_status!=='OBSERVED_COMBINED_LIVE')?'<span class="badge amber">REPORTING INCOMPLETE</span>':stateBadge(s))+'</div></div><div class="grid cards">'+
+ '</div></div><div class="badges"><span class="badge">'+mode+'</span><span class="badge'+(key==='bco'&&(!pauseVerified||bcoPause.paused)?' amber':'')+'">'+entryBadge+'</span>'+(isMetals&&(num(b.pnl_gbp)===null||b.combined_high_water_status!=='OBSERVED_COMBINED_LIVE')?'<span class="badge amber">REPORTING INCOMPLETE</span>':stateBadge(s))+'</div></div><div class="grid cards">'+
  card(isMetals?'Broker P&L · LIVE XAU + XAG SHORT':'Open P&L','<span class="'+cls(b.pnl_gbp)+'">'+money(b.pnl_gbp)+'</span>',pnlNote)+
  card('Realised W / M',money(a.realised_week_gbp),'Month '+money(a.realised_month_gbp)+(isMetals?' · XAU-only; XAG ledger pending':''))+
  card('All-time realised',money(a.realised_all_time_gbp),'Today '+money(a.realised_today_gbp)+(isMetals?' · XAU only':''))+
