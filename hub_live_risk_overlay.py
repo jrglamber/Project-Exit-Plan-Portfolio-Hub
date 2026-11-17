@@ -111,6 +111,7 @@ def aggregate_snapshot() -> Dict[str, Any]:
             data["live_risk_quantified_trade_count"] = int(risk.get("quantified_trade_count") or 0) if risk.get("ok") else None
             data["live_risk_unquantified_trade_count"] = int(risk.get("unquantified_trade_count") or 0) if risk.get("ok") else None
             data["live_risk_by_instrument"] = risk.get("by_instrument") if risk.get("ok") else None
+            data["live_risk_broker_trade_ids"] = risk.get("broker_trade_ids") if risk.get("ok") else None
             data["live_risk_error"] = risk.get("error")
 
         if not risk.get("ok"):
