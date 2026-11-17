@@ -61,6 +61,30 @@ class HubXagCashTests(unittest.TestCase):
             combine_xau_xag(v,payload(),now=NOW)
         self.assertEqual(v["accounting"]["realised_week_gbp"],20.82)
 
+    def test_missing_xau_today_does_not_block_verified_week_month_alltime(self):
+        v=view()
+        v["accounting"]["realised_today_gbp"]=None
+        result=combine_xau_xag(v,payload(),now=NOW)
+        a=result["accounting"]
+        self.assertIsNone(a["realised_today_gbp"])
+        self.assertEqual(a["xag_short_realised_today_gbp"],1.2)
+        self.assertAlmostEqual(a["realised_week_gbp"],33.6948)
+        self.assertAlmostEqual(a["realised_month_gbp"],7.2479)
+        self.assertTrue(a["xag_short_broker_net_verified"])
+
+    def test_second_application_is_blocked(self):
+        v=view()
+        combine_xau_xag(v,payload(),now=NOW)
+        with self.assertRaises(ValueError):
+            combine_xau_xag(v,payload(),now=NOW)
+        self.assertAlmostEqual(v["accounting"]["realised_all_time_gbp"],218.3079)
+
+    def test_future_canonical_combined_source_fails_closed(self):
+        v=view()
+        v["accounting"]["realised_scope"]="XAU_LEGACY_PLUS_XAG_SHORT_NET_BROKER_VERIFIED"
+        with self.assertRaises(ValueError):
+            combine_xau_xag(v,payload(),now=NOW)
+
     def test_dashboard_copy_explicitly_labels_net_broker_scope(self):
         from pathlib import Path
         s=Path("app.py").read_text(encoding="utf-8")
