@@ -85,6 +85,22 @@ def verify():
         raise AssertionError("Portfolio headline open P&L double-counted or missed XAG")
     if portfolio.get("open_risk_estimate_complete") is True:
         raise AssertionError("XAG pilot risk incorrectly represented as XAU base risk")
+    # Stop-floor coverage is a separate broker-risk contract from live P&L.
+    # A 16-stop XAU-only subset must never look like all 38 Metals positions.
+    counted=metals.get("live_risk_open_trade_count")
+    broker_positions=basket.get("open_trades")
+    if isinstance(counted,int) and isinstance(broker_positions,int) and counted != broker_positions:
+        if portfolio.get("live_stop_floor_scope_complete") is not False:
+            raise AssertionError("Missing stop-floor coverage warning for LIVE XAG SHORT")
+        if portfolio.get("live_stop_floor_pnl_gbp") is not None:
+            raise AssertionError("Partial XAU-only stop floor falsely shown as complete")
+        if portfolio.get("live_stop_floor_metals_excluded_count") != max(0,broker_positions-counted):
+            raise AssertionError("Uncovered Metals stop-trade count inconsistent")
+        if "Stop-floor incomplete" not in page:
+            raise AssertionError("Hub stop-floor card still claims complete protection")
+        if not any("stop-floor coverage incomplete" in str(x.get("message") or "").lower()
+                   for x in (snap.get("attention") or {}).get("items",[])):
+            raise AssertionError("Partial stop coverage not raised as an attention warning")
 
     tile=json.loads(get("/api/metals-live-trade-tile"))
     if tile.get("source")!="metals:/api/live-metals-open-positions" or not tile.get("ok"):
