@@ -1,0 +1,23 @@
+name: Hub all-live XAU XAG stop-floor production acceptance
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'hub_tile_order_overlay.py'
+      - 'hub_stop_floor_scope.py'
+      - 'hub_metals_live_positions_bridge.py'
+      - 'smoke_hub_stop_floor_complete.py'
+      - '.github/workflows/hub-stop-floor-production-smoke.yml'
+  workflow_dispatch:
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python -m py_compile smoke_hub_stop_floor_complete.py
+      - name: Verify live portfolio XAU/XAG stop-floor and corrected projected NAV
+        run: python smoke_hub_stop_floor_complete.py
