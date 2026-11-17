@@ -42,7 +42,7 @@ class HubXagCashTests(unittest.TestCase):
 
     def test_invalid_proof_leaves_xau_untouched(self):
         for invalid in ({"reconciled":False},
-                        {"reconciled":True,**payload()},
+                        {**payload(),"reconciled":True},
                         {"reconciled":False,"xag_short_net_gbp_verified":False},
                         {"reconciled":False,"xag_short_net_gbp_verified":True,
                          "xag_short_verified_realised":{"ok":False}}):
