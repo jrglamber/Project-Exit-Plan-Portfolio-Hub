@@ -36,7 +36,7 @@ def _sync_html(text: str) -> str:
     out = out.replace("v0.6.13 · portfolio cockpit", "v0.6.16 · portfolio cockpit")
 
     stop_floor_card = (
-        "card((p.live_stop_floor_complete?'If all stops hit':"
+        "card((p.live_stop_floor_scope_complete===false?'Stop-floor incomplete':p.live_stop_floor_complete?'If all stops hit':"
         "(p.live_risk_endpoint_complete?'Known stop-floor P&L':'If all stops hit'))," 
         "('<span class=\"'+cls(p.live_stop_floor_pnl_gbp)+'\">'+money(p.live_stop_floor_pnl_gbp)+'</span>'),"
         "(p.live_risk_endpoint_complete?((p.live_risk_unquantified_trade_count||0)>0?"
