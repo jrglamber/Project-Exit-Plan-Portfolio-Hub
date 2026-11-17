@@ -1,0 +1,26 @@
+name: Stop-floor LIVE Metals scope guard tests
+on:
+  pull_request:
+    paths:
+      - 'hub_stop_floor_scope.py'
+      - 'hub_stop_floor_overlay.py'
+      - 'test_hub_stop_floor_scope.py'
+      - '.github/workflows/hub-stop-floor-scope-tests.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'hub_stop_floor_scope.py'
+      - 'hub_stop_floor_overlay.py'
+      - 'test_hub_stop_floor_scope.py'
+      - '.github/workflows/hub-stop-floor-scope-tests.yml'
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python -m py_compile hub_stop_floor_scope.py hub_stop_floor_overlay.py
+      - run: python -m unittest -v test_hub_stop_floor_scope
