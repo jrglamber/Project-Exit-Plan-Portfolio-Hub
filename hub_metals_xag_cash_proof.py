@@ -69,6 +69,7 @@ def combine_xau_xag(validated, lane_payload, now=None):
     source["xag_short_broker_net_verified"]=True
     source["realised_scope"]="XAU_LEGACY_PLUS_XAG_SHORT_NET_BROKER_VERIFIED"
     source["lane_reporting_status"]="available"
+    source["xau_long_short_historical_split_status"]="awaiting_reconciliation"
     source["xag_short_accounting_time_utc"]=xag["time_utc"]
     source["xag_short_broker_trade_count"]=int(xag.get("broker_trade_count") or 0)
     # Preserve that the XAU per-side split was not independently proven.
