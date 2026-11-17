@@ -735,6 +735,34 @@ def aggregate_snapshot() -> Dict[str, Any]:
     if nav_disagreement:
         attention.append({"strategy": "portfolio", "severity": "warn", "message": "Live NAV sources disagree materially"})
 
+    # Operational health (workers, candles, broker connectivity) is not the
+    # same as financial-reporting health. Never show "All systems healthy"
+    # while a live basket's P&L is unknown or Metals reconciliation is pending.
+    for key, data, _view in live_rows:
+        basket = data.get("basket") or {}
+        accounting = data.get("accounting") or {}
+        if key == "metals":
+            reporting_issues = []
+            if safe_float(basket.get("pnl_gbp")) is None:
+                reporting_issues.append("XAU + XAG SHORT broker P&L unverified")
+            if basket.get("combined_high_water_status") != "OBSERVED_COMBINED_LIVE":
+                reporting_issues.append("combined high-water unavailable")
+            lane_status = str(accounting.get("lane_reporting_status") or "")
+            if lane_status and lane_status != "available":
+                reporting_issues.append("lane accounting " + lane_status.replace("_", " "))
+            if reporting_issues:
+                attention.append({
+                    "strategy": key,
+                    "severity": "warn",
+                    "message": "Metals reporting: " + "; ".join(reporting_issues),
+                })
+        elif safe_float(basket.get("pnl_gbp")) is None:
+            attention.append({
+                "strategy": key,
+                "severity": "warn",
+                "message": "Live open P&L unverified",
+            })
+
     _record_material_state(views)
 
     portfolio_row = {
@@ -903,7 +931,7 @@ function strategyHtml(key,s,notes){
  var giveNote=isMetals?(combinedPeak?'From combined observed peak'+(num(b.giveback_pct)===null?'':' · '+num(b.giveback_pct).toFixed(1)+'%'):'Combined giveback not yet available'):rr(b.giveback_r);
  var countNote=isMetals?(liveMetals?'LIVE XAU '+intval(b.live_xau_open_count)+' · LIVE XAG SHORT '+intval(b.live_xag_short_open_count)+' · Last opened '+when(b.last_trade_opened_at_utc):'LIVE Metals broker count unavailable'):'Last opened '+when(b.last_trade_opened_at_utc);
  return '<div class="strategy"><div class="strategy-head"><div><div class="strategy-title">'+NAMES[key]+'</div><div class="lane">'+lane+
- '</div></div><div class="badges"><span class="badge">'+mode+'</span><span class="badge">'+status+(dir?' / '+dir:'')+'</span>'+stateBadge(s)+'</div></div><div class="grid cards">'+
+ '</div></div><div class="badges"><span class="badge">'+mode+'</span><span class="badge">'+status+(dir?' / '+dir:'')+'</span>'+(isMetals&&(num(b.pnl_gbp)===null||b.combined_high_water_status!=='OBSERVED_COMBINED_LIVE')?'<span class="badge amber">REPORTING INCOMPLETE</span>':stateBadge(s))+'</div></div><div class="grid cards">'+
  card(isMetals?'Broker P&L · LIVE XAU + XAG SHORT':'Open P&L','<span class="'+cls(b.pnl_gbp)+'">'+money(b.pnl_gbp)+'</span>',pnlNote)+
  card('Realised W / M',money(a.realised_week_gbp),'Month '+money(a.realised_month_gbp)+(isMetals?' · XAU-only; XAG ledger pending':''))+
  card('All-time realised',money(a.realised_all_time_gbp),'Today '+money(a.realised_today_gbp)+(isMetals?' · XAU only':''))+
