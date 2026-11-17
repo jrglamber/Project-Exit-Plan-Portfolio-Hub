@@ -60,6 +60,34 @@ class LiveMetalsBridgeTests(unittest.TestCase):
         self.assertEqual(summary["accounting"]["realised_scope"],
                          "LIVE_XAU_ONLY_XAG_LEDGER_PENDING")
 
+    def test_live_positions_do_not_erase_verified_xag_realised_scope(self):
+        proof=bridge.verify(positions())
+        summary={"basket":{"open_trades":2,"pnl_gbp":13.0,"pnl_r":2.0},
+                 "accounting":{
+                    "realised_all_time_gbp":218.81,
+                    "xag_short_broker_net_verified":True,
+                    "realised_scope":"XAU_LEGACY_PLUS_XAG_SHORT_NET_BROKER_VERIFIED",
+                    "xag_short_realised_all_time_gbp":-32.1221,
+                 }}
+        bridge.apply(summary,proof)
+        self.assertEqual(summary["accounting"]["realised_scope"],
+                         "XAU_LEGACY_PLUS_XAG_SHORT_NET_BROKER_VERIFIED")
+        self.assertAlmostEqual(summary["accounting"]["realised_all_time_gbp"],218.81)
+        self.assertTrue(summary["accounting"]["xag_short_broker_net_verified"])
+        self.assertEqual(summary["basket"]["open_trades"],5)
+
+    def test_open_position_outage_does_not_invalidate_historical_cash(self):
+        summary={"basket":{"open_trades":2,"pnl_gbp":13.0,"pnl_r":2.0},
+                 "accounting":{
+                    "realised_all_time_gbp":218.81,
+                    "xag_short_broker_net_verified":True,
+                    "realised_scope":"XAU_LEGACY_PLUS_XAG_SHORT_NET_BROKER_VERIFIED",
+                 }}
+        bridge.mark_incomplete(summary,"broker positions temporarily unavailable")
+        self.assertEqual(summary["accounting"]["realised_scope"],
+                         "XAU_LEGACY_PLUS_XAG_SHORT_NET_BROKER_VERIFIED")
+        self.assertIsNone(summary["basket"]["pnl_gbp"])
+
     def test_unavailable_broker_is_not_xau_only_fallback(self):
         s={"basket":{"open_trades":2,"pnl_gbp":13.0,"pnl_r":2.0},
            "accounting":{}}
