@@ -46,8 +46,8 @@ def combine_xau_xag(validated, lane_payload, now=None):
     source=validated.get("accounting")
     if not isinstance(source,dict):
         raise ValueError("Metals canonical XAU accounting missing")
-    if source.get("xag_short_broker_net_verified") or (
-            "XAG_SHORT" in str(source.get("realised_scope") or "").upper()):
+    scope=str(source.get("realised_scope") or "").upper()
+    if source.get("xag_short_broker_net_verified") or "XAG_SHORT_NET_BROKER_VERIFIED" in scope:
         raise ValueError("XAG cash already included in canonical summary")
     # The producer sometimes reports None for today's XAU P&L (unavailable),
     # even when XAU week/month/all-time aggregates are known. Preserve that
