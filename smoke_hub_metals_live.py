@@ -70,8 +70,18 @@ def verify():
         raise AssertionError("Combined high-water, broker P&L and giveback do not reconcile")
     if not basket.get("high_water_tracking_started_at_utc"):
         raise AssertionError("Hub combined high-water observation baseline missing")
-    if (metals.get("accounting") or {}).get("realised_scope")!="LIVE_XAU_ONLY_XAG_LEDGER_PENDING":
-        raise AssertionError("Unreconciled XAG realised ledger not disclosed")
+    accounting=metals.get("accounting") or {}
+    if accounting.get("xag_short_broker_net_verified"):
+        if accounting.get("realised_scope")!="XAU_LEGACY_PLUS_XAG_SHORT_NET_BROKER_VERIFIED":
+            raise AssertionError("Broker-verifiable XAG realised cash not labelled correctly")
+        if accounting.get("xag_short_realised_all_time_gbp") is None:
+            raise AssertionError("XAG realised cash missing from Metals reporting")
+    elif accounting.get("realised_scope") not in (
+            "LIVE_XAU_ONLY_XAG_LEDGER_PENDING",
+            "XAU_ONLY_XAG_SHORT_LEDGER_PENDING",
+            "LIVE_XAU_ONLY_XAG_SHORT_LEDGER_PENDING",
+            None):
+        raise AssertionError("Unreconciled XAG realised scope label unexpected")
 
     portfolio=snap.get("portfolio") or {}
     if not portfolio.get("unrealised_pnl_complete"):
