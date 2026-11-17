@@ -145,7 +145,12 @@ def apply(summary: Dict[str, Any], proof: Dict[str, Any]) -> Dict[str, Any]:
     basket["live_positions_status"] = "BROKER_VERIFIED"
     basket["high_water_scope"] = "LIVE_XAU_ONLY"
     basket["giveback_scope"] = "LIVE_XAU_ONLY"
-    accounting["realised_scope"] = "LIVE_XAU_ONLY_XAG_LEDGER_PENDING"
+    # Open-position verification is independent of historical net cash.
+    # Never overwrite a separately broker-verified XAG realised scope here.
+    if not (accounting.get("xag_short_broker_net_verified") is True
+            and accounting.get("realised_scope") ==
+            "XAU_LEGACY_PLUS_XAG_SHORT_NET_BROKER_VERIFIED"):
+        accounting["realised_scope"] = "LIVE_XAU_ONLY_XAG_LEDGER_PENDING"
     summary["live_metals_positions"] = proof
     return summary
 
@@ -164,7 +169,12 @@ def mark_incomplete(summary: Dict[str, Any], reason: str) -> Dict[str, Any]:
     basket["live_open_scope"] = EXPECTED_SCOPE
     basket["high_water_scope"] = "LIVE_XAU_ONLY"
     basket["giveback_scope"] = "LIVE_XAU_ONLY"
-    account["realised_scope"] = "LIVE_XAU_ONLY_XAG_LEDGER_PENDING"
+    # A temporary open-position outage cannot invalidate a separately
+    # reconciled historic XAG broker cash ledger.
+    if not (account.get("xag_short_broker_net_verified") is True
+            and account.get("realised_scope") ==
+            "XAU_LEGACY_PLUS_XAG_SHORT_NET_BROKER_VERIFIED"):
+        account["realised_scope"] = "LIVE_XAU_ONLY_XAG_LEDGER_PENDING"
     summary["live_metals_positions"] = {
         "ok": False, "source": "metals:/api/live-metals-open-positions",
         "reason": str(reason)[:180],
