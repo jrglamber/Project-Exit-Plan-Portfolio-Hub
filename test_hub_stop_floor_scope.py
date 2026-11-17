@@ -2,20 +2,42 @@
 import unittest
 from hub_stop_floor_scope import guard_stop_floor_coverage
 
-def fixture(verified=True,open_count=38,risk_count=16):
+def fixture(verified=True,open_count=38,risk_count=16,quantified=None,
+            wrong_ids=False,xag_long=False):
+    xau_n=min(16,open_count) if isinstance(open_count,int) else 16
+    xag_n=max(0,open_count-xau_n) if isinstance(open_count,int) else 22
+    ids=[f"x{i}" for i in range(xau_n)]+[f"s{i}" for i in range(xag_n)]
+    covered=ids[:risk_count]
+    if wrong_ids and covered:
+        covered[-1]="other-broker-id"
+    quantified=risk_count if quantified is None else quantified
+    xau_quant=min(quantified,xau_n)
+    xag_quant=max(0,quantified-xau_quant)
     return {
         "sources":{"metals":{"data":{
-            "mode":"live",
+            "mode":"live","live_risk_ok":True,
             "basket":{"open_trades":open_count,
+                      "live_xau_open_count":xau_n,
+                      "live_xag_short_open_count":xag_n,
                       "live_positions_status":"BROKER_VERIFIED" if verified else "UNVERIFIED"},
+            "live_metals_positions":{"broker_trade_ids":ids},
+            "live_risk_broker_trade_ids":covered,
             "live_risk_open_trade_count":risk_count,
+            "live_risk_quantified_trade_count":quantified,
+            "live_risk_by_instrument":{
+                "XAU_USD":{"open_trade_count":xau_n,
+                           "quantified_trade_count":xau_quant},
+                "XAG_USD":{"open_trade_count":xag_n,
+                           "short_trade_count":xag_n-(1 if xag_long else 0),
+                           "long_trade_count":1 if xag_long else 0,
+                           "quantified_trade_count":xag_quant},
+            },
             "live_stop_floor_pnl_gbp":-103.38,
             "live_stop_floor_complete":True,
         }}},
         "portfolio":{"live_stop_floor_pnl_gbp":-103.38,
                      "live_stop_floor_complete":True,
-                     "live_risk_complete":True,
-                     "warnings":[]},
+                     "live_risk_complete":True,"warnings":[]},
         "attention":{"items":[]},
     }
 
@@ -40,6 +62,23 @@ class StopFloorScopeTests(unittest.TestCase):
         self.assertEqual(p["live_stop_floor_pnl_gbp"],-103.38)
         self.assertTrue(p["live_stop_floor_complete"])
         self.assertFalse(a["attention"]["items"])
+
+    def test_matching_counts_but_unquantified_xag_does_not_claim_full_floor(self):
+        a=guard_stop_floor_coverage(fixture(risk_count=38,quantified=16))
+        p=a["portfolio"]
+        self.assertIsNone(p["live_stop_floor_pnl_gbp"])
+        self.assertEqual(p["live_stop_floor_metals_excluded_count"],22)
+        self.assertIn("16/38",a["attention"]["items"][0]["message"])
+
+    def test_matching_count_wrong_broker_id_does_not_claim_full_floor(self):
+        a=guard_stop_floor_coverage(fixture(risk_count=38,wrong_ids=True))
+        self.assertFalse(a["portfolio"]["live_stop_floor_metals_exact_trade_ids"])
+        self.assertIsNone(a["portfolio"]["live_stop_floor_pnl_gbp"])
+
+    def test_xag_long_instead_of_short_does_not_count_as_protection(self):
+        a=guard_stop_floor_coverage(fixture(risk_count=38,xag_long=True))
+        self.assertFalse(a["portfolio"]["live_stop_floor_metals_instrument_coverage"])
+        self.assertIsNone(a["portfolio"]["live_stop_floor_pnl_gbp"])
 
     def test_unverified_live_counts_fail_closed(self):
         a=guard_stop_floor_coverage(fixture(verified=False,open_count=None))
