@@ -274,6 +274,44 @@ def fetch_metals_lane_accounting(base: str, headers: Dict[str, str]) -> Dict[str
     return payload
 
 
+
+def fetch_metals_position_witness(base: str, headers: Dict[str, str], proof: Dict[str, Any]) -> Dict[str, Any]:
+    """Retry a transient cross-endpoint broker-population mismatch; no writes.
+
+    The XAU/XAG position and stop-risk endpoints independently read the broker.
+    An out-of-sync pair must never be reported as 40/2 'missing stops' or as
+    genuine flatten/reopen activity. An unavailable risk witness does not
+    invalidate separately verified position P&L.
+    """
+    from hub_metals_snapshot_coherence import population_consistent
+    def read_risk():
+        req = urllib.request.Request(
+            base + "/api/portfolio-risk", headers=headers, method="GET")
+        with urllib.request.urlopen(req, timeout=SOURCE_TIMEOUT_SECONDS) as res:
+            return json.loads(res.read().decode("utf-8"))
+    try:
+        risk = read_risk()
+    except Exception:
+        return proof  # The independent stop-floor guard still reports risk failure.
+    match = population_consistent(proof, risk)
+    for _ in range(2):
+        if match is not False:
+            break
+        time.sleep(0.2)
+        proof = fetch_metals_live_positions(base, headers)
+        try:
+            risk = read_risk()
+        except Exception:
+            return proof
+        match = population_consistent(proof, risk)
+    if match is False:
+        raise ValueError(
+            "LIVE Metals broker position/risk snapshot mismatch after retry; "
+            "positions treated as unknown (not flat); no missing-stop inference"
+        )
+    return proof
+
+
 def fetch_source(key: str) -> Dict[str, Any]:
     base = SOURCES[key]["url"]
     if not base:
@@ -345,10 +383,18 @@ def fetch_source(key: str) -> Dict[str, Any]:
         # LIVE XAG Short broker data, not the XAG practice basket.
         try:
             proof = fetch_metals_live_positions(base, headers)
+            proof = fetch_metals_position_witness(base, headers, proof)
             metals_live.apply(validated, proof)
             try:
-                peak = fetch_metals_combined_high_water(base, headers)
-                observed = metals_hwm.verify(peak, proof, max_age_seconds=STALE_AFTER_SECONDS)
+                try:
+                    peak = fetch_metals_combined_high_water(base, headers)
+                    observed = metals_hwm.verify(peak, proof, max_age_seconds=STALE_AFTER_SECONDS)
+                except Exception:
+                    # Transient close/open between independent broker reads.
+                    # Recheck the observed peak before declaring it unavailable.
+                    time.sleep(0.2)
+                    peak = fetch_metals_combined_high_water(base, headers)
+                    observed = metals_hwm.verify(peak, proof, max_age_seconds=STALE_AFTER_SECONDS)
                 metals_hwm.apply(validated, observed)
             except Exception as exc:
                 # Missing combined history must never be replaced with an
@@ -563,6 +609,8 @@ def _record_material_state(views: Dict[str, Dict[str, Any]]) -> None:
                 "mode": str(data.get("mode") or "unknown").lower(),
                 "open_trades": safe_int(basket.get("open_trades")) or 0,
                 "realised_all_time_gbp": safe_float(accounting.get("realised_all_time_gbp")),
+                "realised_scope": str(accounting.get("realised_scope") or ""),
+                "xag_broker_net_verified": accounting.get("xag_short_broker_net_verified") is True,
                 "high_water_gbp": safe_float(basket.get("high_water_gbp")),
                 "manager": str(exit_mgmt.get("current_manager") or ""),
                 "pending": safe_int(exit_mgmt.get("pending_broker_actions")) or 0,
@@ -584,7 +632,15 @@ def _record_material_state(views: Dict[str, Dict[str, Any]]) -> None:
 
                 prev_realised = safe_float(previous.get("realised_all_time_gbp"))
                 cur_realised = safe_float(current.get("realised_all_time_gbp"))
-                if prev_realised is not None and cur_realised is not None:
+                # Only compare like-for-like broker-verified Metals cash scopes.
+                # A temporary XAG audit gap must not look like banked profit,
+                # a reversal or a broker trade closure in the activity feed.
+                cash_comparable = (key != "metals" or (
+                    previous.get("xag_broker_net_verified") is True
+                    and current.get("xag_broker_net_verified") is True
+                    and previous.get("realised_scope") == current.get("realised_scope")
+                    and current.get("realised_scope") == "XAU_LEGACY_PLUS_XAG_SHORT_NET_BROKER_VERIFIED"))
+                if cash_comparable and prev_realised is not None and cur_realised is not None:
                     delta = cur_realised - prev_realised
                     if abs(delta) >= 0.01:
                         sign = "+" if delta > 0 else ""
