@@ -11,6 +11,7 @@ from typing import Any, Dict, Optional
 
 from financial_review import financial_review_line
 import hub_metals_live_positions_bridge as metals_live
+import hub_metals_lane_basket_r as metals_lane_r
 from hub_basket_activity_guard import position_observation, transition_events
 import hub_metals_combined_observed_hwm as metals_hwm
 from fastapi import FastAPI
@@ -425,6 +426,13 @@ def fetch_source(key: str) -> Dict[str, Any]:
                 metals_hwm.mark_unavailable(validated, f"{type(exc).__name__}: {exc}")
         else:
             metals_hwm.mark_unavailable(validated, "LIVE combined broker positions unverified")
+
+        # XAG R is its own per-trade initial-risk multiple. Never substitute
+        # XAU R, or values sampled against another broker position population.
+        try:
+            metals_lane_r.apply(validated, report.get("xag_short_open_basket"), proof)
+        except Exception as exc:
+            metals_lane_r.mark_unavailable(validated, f"{type(exc).__name__}: {exc}")
 
         risk_section = report.get("risk") or {}
         risk = risk_section.get("data")
@@ -1079,7 +1087,10 @@ function strategyHtml(key,s,notes){
  return '<div class="strategy"><div class="strategy-head"><div><div class="strategy-title">'+NAMES[key]+'</div><div class="lane">'+lane+
  '</div></div><div class="badges"><span class="badge">'+mode+'</span><span class="badge'+(key==='bco'&&(!pauseVerified||bcoPause.paused)?' amber':'')+'">'+entryBadge+'</span>'+(isMetals&&(num(b.pnl_gbp)===null||b.combined_high_water_status!=='OBSERVED_COMBINED_LIVE')?'<span class="badge amber">REPORTING INCOMPLETE</span>':stateBadge(s))+'</div></div><div class="grid cards">'+
  card(isMetals?'Broker P&L · LIVE XAU + XAG SHORT':'Open P&L','<span class="'+cls(b.pnl_gbp)+'">'+money(b.pnl_gbp)+'</span>',pnlNote)+
- (isMetals?card('XAU basket R','<span class="'+cls(b.xau_only_pnl_r)+'">'+rr(b.xau_only_pnl_r)+'</span>','Gold only · live XAU basket · XAG Short excluded'):'')+
+  (isMetals?card('Open basket · R / P&L',
+    '<div style="font-size:14px;line-height:1.7;text-align:left">XAU <strong class="'+cls(b.xau_only_pnl_r)+'">'+rr(b.xau_only_pnl_r)+'</strong> · '+money(b.live_xau_open_pnl_gbp)+
+    '<br>XAG SHORT <strong class="'+cls(b.live_xag_short_open_r)+'">'+rr(b.live_xag_short_open_r)+'</strong> · '+money(b.live_xag_short_open_pnl_gbp)+'</div>',
+    'Live open positions · XAG R uses individual initial GBP risk'+(b.live_xag_short_r_status==='BROKER_LEDGER_VERIFIED'?'':' · XAG R unverified')):'')+
  card('Realised W / M',money(a.realised_week_gbp),'Month '+money(a.realised_month_gbp)+(isMetals?(a.xag_short_broker_net_verified?' · XAU + XAG SHORT net GBP verified':' · XAU-only; XAG ledger pending'):''))+
  card('All-time realised',money(a.realised_all_time_gbp),'Today '+money(a.realised_today_gbp)+(isMetals?(a.xag_short_broker_net_verified?' · XAU + XAG SHORT net GBP verified':' · XAU only'):''))+
  card(isMetals?'High water · LIVE XAU + XAG SHORT':'High water',money(b.high_water_gbp),peakNote)+
