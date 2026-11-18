@@ -1,5 +1,5 @@
 name: One-off Metals live financial and stop health diagnostic
-# Final production read-only validation after reconciliation fixes
+# Post-async-XAG-cash production read-only verification
 on:
   push:
     paths: [".github/workflows/metals-health-diagnostic.yml"]
