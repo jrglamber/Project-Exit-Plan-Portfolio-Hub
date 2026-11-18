@@ -1,0 +1,29 @@
+name: Hub basket event broker position verification
+on:
+  pull_request:
+    paths:
+      - 'app.py'
+      - 'hub_basket_activity_proof.py'
+      - 'test_hub_basket_activity_proof.py'
+      - '.github/workflows/hub-basket-activity-proof.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'app.py'
+      - 'hub_basket_activity_proof.py'
+      - 'test_hub_basket_activity_proof.py'
+      - '.github/workflows/hub-basket-activity-proof.yml'
+  workflow_dispatch:
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Check activity code and exact November 18 telemetry-gap regression
+        run: |
+          python -m py_compile app.py hub_basket_activity_proof.py test_hub_basket_activity_proof.py
+          python -m unittest -v test_hub_basket_activity_proof
