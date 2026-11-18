@@ -49,19 +49,18 @@ def check():
     sources=aggregate.get("sources") or {}
     for period in ("week","month","all_time"):
         field=f"realised_{period}_gbp"
-        total=0.0
+        live_values=[]
         for key in ("indices","metals","bco"):
             d=((sources.get(key) or {}).get("data") or {})
-            if str(d.get("mode") or "").lower()!="live":continue
-            value=(d.get("accounting") or {}).get(field)
-            # The existing Hub explicitly reports "known realised" values:
-            # historical Indices all-time can be unavailable, and must not
-            # block Metals XAU+XAG broker reconciliation or be assumed zero.
-            if value is not None:
-                total+=float(value)
+            if str(d.get("mode") or "").lower()!="live":
+                raise AssertionError("Entire LIVE portfolio scope missing "+key)
+            live_values.append((d.get("accounting") or {}).get(field))
         portfolio=p.get(field)
-        if portfolio is None or abs(total-float(portfolio))>0.03:
-            raise AssertionError("Portfolio "+field+" not equal to included strategies")
+        if any(value is None for value in live_values):
+            if portfolio is not None:
+                raise AssertionError("Partial LIVE realised sum was reported as complete for "+field)
+        elif portfolio is None or abs(sum(float(v) for v in live_values)-float(portfolio))>0.03:
+            raise AssertionError("Portfolio "+field+" not equal to complete live strategy scope")
     if any(item.get("strategy")=="metals" and
            "lane accounting awaiting reconciliation" in str(item.get("message") or "").lower()
            for item in (aggregate.get("attention") or {}).get("items",[])):
@@ -72,7 +71,7 @@ def check():
     print("PASS: Hub realised XAU + XAG broker cash reconciled, unmodified XAU source retained, "
           f"XAG all time {float(a['xag_short_realised_all_time_gbp']):.2f} GBP, "
           f"Metals combined all time {float(a['realised_all_time_gbp']):.2f} GBP, "
-          f"portfolio all time {float(p['realised_all_time_gbp']):.2f} GBP; "
+          "portfolio all time " + (("%.2f" % float(p["realised_all_time_gbp"])) if p.get("realised_all_time_gbp") is not None else "unavailable (incomplete strategy history)") + " GBP; "
           "no pending XAG warning or double count.")
 
 if __name__=="__main__":
