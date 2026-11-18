@@ -77,7 +77,8 @@ def guard_stop_floor_coverage(snapshot):
         p["live_stop_floor_metals_excluded_count"]=0
         return snapshot
 
-    missing=max(0,expected-quantified) if expected is not None and quantified is not None else None
+    missing=(None if snapshot_mismatch else
+             max(0,expected-quantified) if expected is not None and quantified is not None else None)
     p["live_stop_floor_metals_excluded_count"]=missing
     if snapshot_mismatch:
         reason=(f"Metals broker position/risk snapshots disagree: "
@@ -103,7 +104,7 @@ def guard_stop_floor_coverage(snapshot):
     metals["live_stop_floor_known_partial_gbp"]=metals.get("live_stop_floor_pnl_gbp")
     metals["live_stop_floor_pnl_gbp"]=None
     metals["live_stop_floor_complete"]=False
-    metals["live_stop_floor_coverage_status"]="INCOMPLETE"
+    metals["live_stop_floor_coverage_status"]=status
     metals["live_stop_floor_coverage_warning"]=reason
     warnings=p.setdefault("warnings",[])
     if reason not in warnings:
