@@ -1,0 +1,29 @@
+name: Metals canonical reporting reliability canary
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'app.py'
+      - 'hub_live_risk_overlay.py'
+      - 'hub_metals_live_positions_bridge.py'
+      - 'hub_metals_snapshot_coherence.py'
+      - 'hub_stop_floor_scope.py'
+      - 'smoke_metals_authoritative_reporting.py'
+      - '.github/workflows/metals-authoritative-reporting-canary.yml'
+  schedule:
+    # Read-only external production verification every two hours.
+    - cron: '17 */2 * * *'
+  workflow_dispatch:
+jobs:
+  reporting-canary:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Assert no false zero, no partial cash and matched broker stop floor
+        run: |
+          python -m py_compile smoke_metals_authoritative_reporting.py
+          python smoke_metals_authoritative_reporting.py
