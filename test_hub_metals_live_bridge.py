@@ -140,7 +140,7 @@ class LiveMetalsBridgeTests(unittest.TestCase):
     def test_real_hub_code_wired_to_live_producer_and_mixed_scope_labels(self):
         app=pathlib.Path("app.py").read_text()
         overlay=pathlib.Path("hub_metals_candidate_support_overlay.py").read_text()
-        self.assertIn('"/api/live-metals-open-positions"', app)
+        self.assertIn('"/api/live-metals-reporting-snapshot"', app)
         self.assertIn('metals_live.apply(validated, proof)',app)
         self.assertIn('metals_live.mark_incomplete(validated,',app)
         self.assertIn('basket.get("xau_only_open_trades")',app)
