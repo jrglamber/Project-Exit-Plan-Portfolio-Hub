@@ -1,0 +1,22 @@
+name: Hub XAG live basket R acceptance
+on:
+  push:
+    branches: [feature/xag-live-basket-r-tile-20261118]
+  pull_request:
+    paths:
+      - 'hub_metals_lane_basket_r.py'
+      - 'app.py'
+      - 'test_hub_metals_lane_basket_r.py'
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Compile Hub aggregation and view
+        run: python -m py_compile app.py hub_metals_lane_basket_r.py
+      - name: Broker proof validation
+        run: python -m unittest -v test_hub_metals_lane_basket_r
