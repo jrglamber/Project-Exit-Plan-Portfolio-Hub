@@ -1,4 +1,5 @@
 name: Hub observer link probe
+# Post-Metals-retry production verification
 on:
   push:
     paths: [".github/workflows/hub-observer-link-probe.yml"]
