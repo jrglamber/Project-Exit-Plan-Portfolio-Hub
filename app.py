@@ -603,8 +603,18 @@ def _record_material_state(views: Dict[str, Dict[str, Any]]) -> None:
 
                 prev_hwm = safe_float(previous.get("high_water_gbp"))
                 cur_hwm = safe_float(current.get("high_water_gbp"))
-                if prev_hwm is not None and cur_hwm is not None and open_now > 0 and cur_hwm < prev_hwm - 0.01:
-                    _append_activity("high_water_reset", key, f"High-water reset GBP {prev_hwm:.2f} -> GBP {cur_hwm:.2f}", "info")
+                # A tiny downward change in sampled HWM is not proof that
+                # an actual basket high-water reset was executed.
+                if (current.get("position_verified") is True
+                        and previous.get("position_verified") is True
+                        and (current.get("open_trades") or 0) > 0
+                        and prev_hwm is not None and cur_hwm is not None
+                        and cur_hwm < prev_hwm - max(0.50, abs(prev_hwm) * 0.01)):
+                    _append_activity(
+                        "high_water_decrease_observed", key,
+                        f"Reported high-water declined GBP {prev_hwm:.2f} -> GBP {cur_hwm:.2f}; reset not broker-confirmed",
+                        "warn",
+                    )
 
                 if current["manager"] and previous.get("manager") and current["manager"] != previous.get("manager"):
                     _append_activity("manager_change", key, f"Exit manager {previous.get('manager')} -> {current['manager']}", "info")
