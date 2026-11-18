@@ -53,10 +53,18 @@ def guard_stop_floor_coverage(snapshot):
         and _count(xau.get("quantified_trade_count", 0 if xau_expected==0 else None)) == xau_expected
         and _count(xag.get("quantified_trade_count", 0 if xag_expected==0 else None)) == xag_expected
     )
+    # Counts from independent broker reads can temporarily disagree as trades
+    # open/close. More quantified trades than observed positions CANNOT mean
+    # "missing stops"; the snapshots are not comparable and must fail closed.
+    snapshot_mismatch = bool(verified and expected is not None
+                             and counted is not None
+                             and (counted > expected
+                                  or (quantified is not None and quantified > expected)
+                                  or (counted == expected and not exact_ids)))
     status=("COMPLETE" if (verified and expected is not None
             and counted == expected and quantified == expected
             and exact_ids and instrument_coverage)
-            else "INCOMPLETE")
+            else ("SNAPSHOT_MISMATCH" if snapshot_mismatch else "INCOMPLETE"))
     p=snapshot.setdefault("portfolio",{})
     p["live_stop_floor_scope_status"]=status
     p["live_stop_floor_scope_complete"]=status=="COMPLETE"
@@ -71,10 +79,19 @@ def guard_stop_floor_coverage(snapshot):
 
     missing=max(0,expected-quantified) if expected is not None and quantified is not None else None
     p["live_stop_floor_metals_excluded_count"]=missing
-    reason=(f"Metals stop-floor coverage incomplete: {quantified if quantified is not None else '?'}"
-            f"/{expected if expected is not None else '?'} LIVE Metals broker positions stop-verified"
-            + ("; broker trade IDs mismatch" if not exact_ids else "")
-            + ("; instrument scope mismatch" if not instrument_coverage else ""))
+    if snapshot_mismatch:
+        reason=(f"Metals broker position/risk snapshots disagree: "
+                f"{expected if expected is not None else '?'} verified positions vs "
+                f"{counted if counted is not None else '?'} risk-feed trades "
+                f"({quantified if quantified is not None else '?'} quantified). "
+                "Stop-floor withheld until fresh snapshots agree; "
+                "this is NOT proof of missing broker stop orders.")
+    else:
+        reason=(f"Metals stop-floor coverage incomplete: "
+                f"{min(quantified, expected) if quantified is not None and expected is not None else '?'}"
+                f"/{expected if expected is not None else '?'} LIVE Metals broker positions stop-verified"
+                + ("; broker trade IDs mismatch" if not exact_ids else "")
+                + ("; instrument scope mismatch" if not instrument_coverage else ""))
     p["live_stop_floor_coverage_warning"]=reason
 
     # Retain the original quantified subset for audit, but NEVER present it as
