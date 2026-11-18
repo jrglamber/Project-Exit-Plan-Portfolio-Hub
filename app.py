@@ -894,6 +894,8 @@ def aggregate_snapshot() -> Dict[str, Any]:
                 reporting_issues.append("XAU + XAG SHORT broker P&L unverified")
             if basket.get("combined_high_water_status") != "OBSERVED_COMBINED_LIVE":
                 reporting_issues.append("combined high-water unavailable")
+            if basket.get("live_xag_short_r_status") != "BROKER_LEDGER_VERIFIED":
+                reporting_issues.append("XAG SHORT open R unverified")
             lane_status = str(accounting.get("lane_reporting_status") or "")
             if lane_status and lane_status != "available":
                 reporting_issues.append("lane accounting " + lane_status.replace("_", " "))
@@ -1085,7 +1087,7 @@ function strategyHtml(key,s,notes){
  var giveNote=isMetals?(combinedPeak?'From combined observed peak'+(num(b.giveback_pct)===null?'':' · '+num(b.giveback_pct).toFixed(1)+'%'):'Combined giveback not yet available'):rr(b.giveback_r);
  var countNote=isMetals?(liveMetals?'LIVE XAU '+intval(b.live_xau_open_count)+' · LIVE XAG SHORT '+intval(b.live_xag_short_open_count)+' · Last opened '+when(b.last_trade_opened_at_utc):'LIVE Metals broker count unavailable'):'Last opened '+when(b.last_trade_opened_at_utc);
  return '<div class="strategy"><div class="strategy-head"><div><div class="strategy-title">'+NAMES[key]+'</div><div class="lane">'+lane+
- '</div></div><div class="badges"><span class="badge">'+mode+'</span><span class="badge'+(key==='bco'&&(!pauseVerified||bcoPause.paused)?' amber':'')+'">'+entryBadge+'</span>'+(isMetals&&(num(b.pnl_gbp)===null||b.combined_high_water_status!=='OBSERVED_COMBINED_LIVE')?'<span class="badge amber">REPORTING INCOMPLETE</span>':stateBadge(s))+'</div></div><div class="grid cards">'+
+ '</div></div><div class="badges"><span class="badge">'+mode+'</span><span class="badge'+(key==='bco'&&(!pauseVerified||bcoPause.paused)?' amber':'')+'">'+entryBadge+'</span>'+(isMetals&&(num(b.pnl_gbp)===null||b.combined_high_water_status!=='OBSERVED_COMBINED_LIVE'||b.live_xag_short_r_status!=='BROKER_LEDGER_VERIFIED')?'<span class="badge amber">REPORTING INCOMPLETE</span>':stateBadge(s))+'</div></div><div class="grid cards">'+
  card(isMetals?'Broker P&L · LIVE XAU + XAG SHORT':'Open P&L','<span class="'+cls(b.pnl_gbp)+'">'+money(b.pnl_gbp)+'</span>',pnlNote)+
   (isMetals?card('Open basket · R / P&L',
     '<div style="font-size:14px;line-height:1.7;text-align:left">XAU <strong class="'+cls(b.xau_only_pnl_r)+'">'+rr(b.xau_only_pnl_r)+'</strong> · '+money(b.live_xau_open_pnl_gbp)+
