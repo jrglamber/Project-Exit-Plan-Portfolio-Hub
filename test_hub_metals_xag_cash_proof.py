@@ -88,7 +88,7 @@ class HubXagCashTests(unittest.TestCase):
     def test_dashboard_copy_explicitly_labels_net_broker_scope(self):
         from pathlib import Path
         s=Path("app.py").read_text(encoding="utf-8")
-        self.assertIn("combine_xau_xag(validated, lane_payload)",s)
+        self.assertIn('combine_xau_xag(validated, {',s)
         self.assertIn("XAU + XAG SHORT net GBP verified",s)
         self.assertIn("broker-verified XAG Short net cash",s)
 
