@@ -63,6 +63,15 @@ class StopFloorScopeTests(unittest.TestCase):
         self.assertTrue(p["live_stop_floor_complete"])
         self.assertFalse(a["attention"]["items"])
 
+    def test_disagreeing_broker_snapshots_are_not_reported_as_40_of_2_missing_stops(self):
+        a = guard_stop_floor_coverage(fixture(open_count=2, risk_count=40, quantified=40))
+        p = a["portfolio"]
+        self.assertEqual(p["live_stop_floor_scope_status"], "SNAPSHOT_MISMATCH")
+        self.assertIsNone(p["live_stop_floor_pnl_gbp"])
+        self.assertIn("2 verified positions vs 40 risk-feed trades", p["live_stop_floor_coverage_warning"])
+        self.assertNotIn("40/2", p["live_stop_floor_coverage_warning"])
+        self.assertIn("NOT proof of missing broker stop orders", p["live_stop_floor_coverage_warning"])
+
     def test_matching_counts_but_unquantified_xag_does_not_claim_full_floor(self):
         a=guard_stop_floor_coverage(fixture(risk_count=38,quantified=16))
         p=a["portfolio"]
