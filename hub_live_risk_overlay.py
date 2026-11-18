@@ -62,13 +62,23 @@ def _fetch_one(key: str, base_url: str) -> dict:
         return {"ok": False, "scope": key, "error": f"{type(exc).__name__}: {exc}"}
 
 
-def _risk_bundle() -> Dict[str, dict]:
+def _risk_bundle(snapshot=None) -> Dict[str, dict]:
     global _RISK_CACHE, _RISK_CACHE_AT
     now = time.monotonic()
+    metals_source = ((((snapshot or {}).get("sources") or {}).get("metals") or {})
+                     .get("data") or {})
+    metals_risk = metals_source.get("live_metals_report_risk")
+    if not isinstance(metals_risk, dict):
+        metals_risk = {"ok": False, "scope": "metals",
+                       "error": "Canonical Metals risk witness unavailable"}
     with _RISK_LOCK:
         if _RISK_CACHE and now - _RISK_CACHE_AT < _RISK_TTL_SECONDS:
-            return {k: dict(v) for k, v in _RISK_CACHE.items()}
-    urls = _service_urls()
+            cached = {k: dict(v) for k, v in _RISK_CACHE.items()}
+            cached["metals"] = dict(metals_risk)
+            return cached
+    # Do not fetch Metals separately: its risk witness must match the exact
+    # broker trade IDs in the canonical positions sample for this Hub refresh.
+    urls = {k: v for k, v in _service_urls().items() if k != "metals"}
     results: Dict[str, dict] = {}
     with ThreadPoolExecutor(max_workers=3) as pool:
         futures = {pool.submit(_fetch_one, key, url): key for key, url in urls.items()}
@@ -78,6 +88,7 @@ def _risk_bundle() -> Dict[str, dict]:
                 results[key] = future.result()
             except Exception as exc:
                 results[key] = {"ok": False, "scope": key, "error": f"{type(exc).__name__}: {exc}"}
+    results["metals"] = dict(metals_risk)
     with _RISK_LOCK:
         _RISK_CACHE = {k: dict(v) for k, v in results.items()}
         _RISK_CACHE_AT = now
@@ -93,7 +104,7 @@ def _f(value: Any):
 
 def aggregate_snapshot() -> Dict[str, Any]:
     snap = _ORIGINAL_AGGREGATE()
-    risks = _risk_bundle()
+    risks = _risk_bundle(snap)
     total_known = 0.0
     total_locked_floor = 0.0
     total_open = 0
