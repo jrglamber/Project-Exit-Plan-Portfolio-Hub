@@ -11,6 +11,7 @@ from typing import Any, Dict, Optional
 
 from financial_review import financial_review_line
 import hub_metals_live_positions_bridge as metals_live
+from hub_basket_activity_proof import verified_position_count, position_activity
 import hub_metals_combined_observed_hwm as metals_hwm
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
@@ -560,7 +561,7 @@ def _record_material_state(views: Dict[str, Dict[str, Any]]) -> None:
             signal = view.get("signal") or {}
             current = {
                 "mode": str(data.get("mode") or "unknown").lower(),
-                "open_trades": safe_int(basket.get("open_trades")) or 0,
+                "open_trades": verified_position_count(key, view, data),
                 "realised_all_time_gbp": safe_float(accounting.get("realised_all_time_gbp")),
                 "high_water_gbp": safe_float(basket.get("high_water_gbp")),
                 "manager": str(exit_mgmt.get("current_manager") or ""),
@@ -571,18 +572,18 @@ def _record_material_state(views: Dict[str, Dict[str, Any]]) -> None:
                 "ok": bool(view.get("ok")),
             }
             previous = _previous_material_state.get(key)
+            # Preserve the last *verified* count through telemetry gaps.  The
+            # current unknown count must never become an artificial zero.
+            current["last_verified_open_trades"] = (
+                current["open_trades"] if current["open_trades"] is not None
+                else (previous.get("last_verified_open_trades") if previous else None)
+            )
             if previous:
-                prev_open = int(previous.get("open_trades") or 0)
-                open_now = int(current["open_trades"])
-                if prev_open == 0 and open_now > 0:
-                    _append_activity("basket_opened", key, f"Basket opened - {open_now} trades", "good")
-                elif prev_open > 0 and open_now == 0:
-                    _append_activity("basket_flattened", key, "Basket flattened", "good")
-                elif open_now < prev_open:
-                    reduction = prev_open - open_now
-                    material_cut = reduction >= max(3, int(prev_open * 0.25))
-                    if material_cut:
-                        _append_activity("basket_reduced", key, f"Basket reduced {prev_open} -> {open_now} trades", "info")
+                open_now = current["open_trades"]
+                activity = position_activity(previous, open_now)
+                if activity is not None:
+                    kind, message, tone = activity
+                    _append_activity(kind, key, message, tone)
 
                 prev_realised = safe_float(previous.get("realised_all_time_gbp"))
                 cur_realised = safe_float(current.get("realised_all_time_gbp"))
@@ -590,11 +591,11 @@ def _record_material_state(views: Dict[str, Dict[str, Any]]) -> None:
                     delta = cur_realised - prev_realised
                     if abs(delta) >= 0.01:
                         sign = "+" if delta > 0 else ""
-                        _append_activity("realised", key, f"Realised P&L changed {sign}GBP {delta:.2f}", "good" if delta > 0 else "bad")
+                        _append_activity("realised", key, f"Reported realised total changed {sign}GBP {delta:.2f} (snapshot difference; not an individual trade)", "good" if delta > 0 else "bad")
 
                 prev_hwm = safe_float(previous.get("high_water_gbp"))
                 cur_hwm = safe_float(current.get("high_water_gbp"))
-                if prev_hwm is not None and cur_hwm is not None and open_now > 0 and cur_hwm < prev_hwm - 0.01:
+                if prev_hwm is not None and cur_hwm is not None and open_now is not None and open_now > 0 and cur_hwm < prev_hwm - 0.01:
                     _append_activity("high_water_reset", key, f"High-water reset GBP {prev_hwm:.2f} -> GBP {cur_hwm:.2f}", "info")
 
                 if current["manager"] and previous.get("manager") and current["manager"] != previous.get("manager"):
