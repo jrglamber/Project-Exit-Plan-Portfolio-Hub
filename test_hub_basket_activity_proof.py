@@ -69,7 +69,7 @@ class BasketActivityProofTests(unittest.TestCase):
     def test_repeated_good_snapshots_do_not_spam_events(self):
         self.assertIsNone(position_activity({"open_trades":42},42))
         self.assertIsNone(position_activity({"open_trades":45},44))
-        self.assertEqual(position_activity({"open_trades":45},42)[0],"basket_reduced")
+        self.assertEqual(position_activity({"open_trades":45},20)[0],"basket_reduced")
 
     def test_indices_and_bco_counts_not_hidden(self):
         for key in ("indices","bco"):
