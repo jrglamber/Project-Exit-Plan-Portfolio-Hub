@@ -29,7 +29,9 @@ _ORIGINAL_AGGREGATE = core.aggregate_snapshot
 _RISK_CACHE: Dict[str, dict] = {}
 _RISK_CACHE_AT = 0.0
 _RISK_LOCK = threading.RLock()
-_RISK_TTL_SECONDS = 10.0
+# Keep broker-risk snapshots close to separately fetched LIVE positions.
+# A ten-second cache produced incomparable position/stop populations in fast markets.
+_RISK_TTL_SECONDS = 2.0
 
 
 def _service_urls() -> Dict[str, str]:
