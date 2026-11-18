@@ -61,7 +61,9 @@ def guard_stop_floor_coverage(snapshot):
                              and (counted > expected
                                   or (quantified is not None and quantified > expected)
                                   or (counted == expected and not exact_ids)))
-    status=("COMPLETE" if (verified and expected is not None
+    positions_unknown = basket.get("live_positions_status") != "BROKER_VERIFIED" or expected is None
+    status=("UNAVAILABLE" if positions_unknown else
+            "COMPLETE" if (verified and expected is not None
             and counted == expected and quantified == expected
             and exact_ids and instrument_coverage)
             else ("SNAPSHOT_MISMATCH" if snapshot_mismatch else "INCOMPLETE"))
@@ -77,10 +79,18 @@ def guard_stop_floor_coverage(snapshot):
         p["live_stop_floor_metals_excluded_count"]=0
         return snapshot
 
-    missing=(None if snapshot_mismatch else
+    missing=(None if snapshot_mismatch or positions_unknown else
              max(0,expected-quantified) if expected is not None and quantified is not None else None)
     p["live_stop_floor_metals_excluded_count"]=missing
-    if snapshot_mismatch:
+    if positions_unknown:
+        reason=("Metals LIVE position verification unavailable; combined stop-floor withheld. "
+                "The separate broker risk feed reports "
+                + (f"{quantified}/{counted} trade(s) quantified"
+                   if quantified is not None and counted is not None
+                   else "unknown stop coverage")
+                + ", but cannot be matched to a verified LIVE Metals position snapshot. "
+                  "This is NOT confirmation that broker stops are absent.")
+    elif snapshot_mismatch:
         reason=(f"Metals broker position/risk snapshots disagree: "
                 f"{expected if expected is not None else '?'} verified positions vs "
                 f"{counted if counted is not None else '?'} risk-feed trades "
