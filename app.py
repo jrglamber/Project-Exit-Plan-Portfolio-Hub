@@ -240,6 +240,36 @@ def validate_summary(key: str, payload: Any) -> Dict[str, Any]:
     }
 
 
+def fetch_metals_authoritative_reporting(base: str, headers: Dict[str, str]) -> Dict[str, Any]:
+    """Strictly versioned and timestamped consolidated reporting contract."""
+    req = urllib.request.Request(
+        base + "/api/live-metals-reporting-snapshot", headers=headers, method="GET"
+    )
+    with urllib.request.urlopen(req, timeout=SOURCE_TIMEOUT_SECONDS) as resp:
+        if int(getattr(resp, "status", 200)) != 200:
+            raise RuntimeError("LIVE Metals reporting snapshot HTTP error")
+        payload = json.loads(resp.read().decode("utf-8"))
+    if (not isinstance(payload, dict)
+            or payload.get("version") != "metals_reporting_snapshot_v1_20261118"
+            or payload.get("scope") != metals_live.EXPECTED_SCOPE
+            or payload.get("read_only") is not True
+            or payload.get("execution_authority") is not False
+            or not all(isinstance(payload.get(k), dict)
+                       for k in ("positions", "combined", "cash", "risk"))):
+        raise ValueError("Canonical Metals reporting snapshot contract invalid")
+    age = iso_age_seconds(payload.get("generated_at_utc"))
+    try:
+        check = datetime.fromisoformat(str(payload.get("generated_at_utc")).replace("Z", "+00:00"))
+        if check.tzinfo is None:
+            raise ValueError("Timestamp missing timezone")
+        ahead = (check.astimezone(timezone.utc) - datetime.now(timezone.utc)).total_seconds()
+    except (ValueError, TypeError, OverflowError) as exc:
+        raise ValueError("Metals reporting snapshot timestamp invalid") from exc
+    if age is None or age > STALE_AFTER_SECONDS or ahead > 10:
+        raise ValueError("Canonical Metals reporting snapshot stale or future")
+    return payload
+
+
 def fetch_metals_live_positions(base: str, headers: Dict[str, str]) -> Dict[str, Any]:
     """Fetch current LIVE broker-backed XAU+XAG, not demo or historical estimates."""
     req = urllib.request.Request(base + "/api/live-metals-open-positions", headers=headers, method="GET")
@@ -340,84 +370,78 @@ def fetch_source(key: str) -> Dict[str, Any]:
                 "error": f"{type(exc).__name__}: {exc}"[:160],
             }
     if key == "metals":
-        # An optional probe failure must not take down canonical reporting.
+        # One producer-owned broker sample replaces four independently timed
+        # calls; each financial proof remains independently fail-closed.
         try:
-            lane_payload = fetch_metals_lane_accounting(base, headers)
-            # Freshness and full lane coverage are mandatory for trusted P&L.
-            stamp = lane_payload.get("time_utc")
-            age = iso_age_seconds(stamp)
-            try:
-                parsed = datetime.fromisoformat(str(stamp).replace("Z", "+00:00"))
-                if parsed.tzinfo is None:
-                    parsed = parsed.replace(tzinfo=timezone.utc)
-                not_future = parsed.astimezone(timezone.utc) <= datetime.now(timezone.utc)
-            except (TypeError, ValueError, OverflowError):
-                not_future = False
-            rows = lane_payload.get("live_lanes")
-            required_lanes = ("xau_long", "xau_short", "xag_short")
-            verified = (lane_payload.get("ok") is True and lane_payload.get("reconciled") is True
-                        and lane_payload.get("coverage_verified") is True
-                        and age is not None and not_future and age <= STALE_AFTER_SECONDS
-                        and isinstance(rows, dict)
-                        and all(isinstance(rows.get(lane), dict) and
-                                rows[lane].get("reporting_status") == "available" and
-                                all(rows[lane].get(field) is not None for field in (
-                                    "realised_week_gbp", "realised_month_gbp",
-                                    "realised_all_time_gbp", "unrealised_gbp", "open_trades"))
-                                for lane in required_lanes))
-            if verified and isinstance(lane_payload.get("live_lanes"), dict):
-                validated["accounting"]["live_lanes"] = lane_payload["live_lanes"]
-                validated["accounting"]["reconciled"] = True
-                validated["accounting"]["coverage_verified"] = True
-            else:
-                try:
-                    from hub_metals_xag_cash_proof import combine_xau_xag
-                    combine_xau_xag(validated, lane_payload)
-                except Exception:
-                    validated["accounting"]["lane_reporting_status"] = str(
-                        lane_payload.get("reporting_status") or "awaiting_reconciliation")
-        except Exception:
-            validated["accounting"]["lane_reporting_status"] = "producer_unavailable"
-        # A failed XAG audit cannot turn XAU-only realised money into the
-        # headline for the combined LIVE Metals strategy. Preserve a clearly
-        # scoped XAU baseline for research; combined portfolio realised cash
-        # remains unknown until a fresh verified XAG broker-cash proof exists.
+            report = fetch_metals_authoritative_reporting(base, headers)
+        except Exception as exc:
+            report = {"positions": None, "combined": None, "cash": None,
+                      "risk": None, "error": f"{type(exc).__name__}: {exc}"[:160]}
+        validated["live_metals_report"] = {
+            "version": report.get("version"),
+            "generated_at_utc": report.get("generated_at_utc"),
+            "error": report.get("error"),
+        }
         accounting = validated.setdefault("accounting", {})
-        if not (accounting.get("xag_short_broker_net_verified") is True and
-                accounting.get("realised_scope") ==
-                "XAU_LEGACY_PLUS_XAG_SHORT_NET_BROKER_VERIFIED"):
-            for field in ("realised_today_gbp","realised_week_gbp",
-                          "realised_month_gbp","realised_all_time_gbp"):
-                accounting.setdefault("xau_only_"+field,accounting.get(field))
-                accounting[field]=None
-            accounting["realised_scope"]="COMBINED_METALS_CASH_UNVERIFIED"
-            accounting["lane_reporting_status"]=str(
-                accounting.get("lane_reporting_status") or "awaiting_reconciliation")
-        # The original /api/portfolio-summary basket is XAU-only. The only
-        # accepted Metals open P&L/count comes from the reconciled LIVE XAU +
-        # LIVE XAG Short broker data, not the XAG practice basket.
-        try:
-            proof = fetch_metals_live_positions(base, headers)
-            proof = fetch_metals_position_witness(base, headers, proof)
-            metals_live.apply(validated, proof)
+        cash = report.get("cash") or {}
+        if cash.get("ok") is True and isinstance(cash.get("proof"), dict):
             try:
-                try:
-                    peak = fetch_metals_combined_high_water(base, headers)
-                    observed = metals_hwm.verify(peak, proof, max_age_seconds=STALE_AFTER_SECONDS)
-                except Exception:
-                    # Transient close/open between independent broker reads.
-                    # Recheck the observed peak before declaring it unavailable.
-                    time.sleep(0.2)
-                    peak = fetch_metals_combined_high_water(base, headers)
-                    observed = metals_hwm.verify(peak, proof, max_age_seconds=STALE_AFTER_SECONDS)
-                metals_hwm.apply(validated, observed)
-            except Exception as exc:
-                # Missing combined history must never be replaced with an
-                # incorrectly-labelled XAU-only historical peak.
-                metals_hwm.mark_unavailable(validated, f"{type(exc).__name__}: {exc}")
+                from hub_metals_xag_cash_proof import combine_xau_xag
+                combine_xau_xag(validated, {
+                    "reconciled": False, "xag_short_net_gbp_verified": True,
+                    "xag_short_verified_realised": cash["proof"],
+                })
+            except Exception:
+                cash = dict(cash, ok=False, status="UNVERIFIED",
+                            reason_type="CashScopeValidationFailed")
+        if accounting.get("xag_short_broker_net_verified") is not True:
+            for field in ("realised_today_gbp", "realised_week_gbp",
+                          "realised_month_gbp", "realised_all_time_gbp"):
+                accounting.setdefault("xau_only_" + field, accounting.get(field))
+                accounting[field] = None
+            accounting["realised_scope"] = "COMBINED_METALS_CASH_UNVERIFIED"
+            accounting["lane_reporting_status"] = (
+                "audit_refreshing" if cash.get("status") == "REFRESHING"
+                else "awaiting_reconciliation"
+            )
+        validated["live_metals_report"]["cash_status"] = (
+            "BROKER_VERIFIED" if accounting.get("xag_short_broker_net_verified")
+            else str(cash.get("status") or "UNVERIFIED")
+        )
+
+        proof = None
+        try:
+            proof = metals_live.verify(report.get("positions"),
+                                       max_age_seconds=STALE_AFTER_SECONDS)
+            metals_live.apply(validated, proof)
         except Exception as exc:
             metals_live.mark_incomplete(validated, f"{type(exc).__name__}: {exc}")
+        if proof is not None:
+            try:
+                observed = metals_hwm.verify(report.get("combined"), proof,
+                                             max_age_seconds=STALE_AFTER_SECONDS)
+                metals_hwm.apply(validated, observed)
+            except Exception as exc:
+                metals_hwm.mark_unavailable(validated, f"{type(exc).__name__}: {exc}")
+        else:
             metals_hwm.mark_unavailable(validated, "LIVE combined broker positions unverified")
+
+        risk_section = report.get("risk") or {}
+        risk = risk_section.get("data")
+        matched = False
+        if proof is not None and risk_section.get("ok") is True and isinstance(risk, dict):
+            from hub_metals_snapshot_coherence import population_consistent
+            matched = population_consistent(report.get("positions"), risk) is True
+        validated["live_metals_report_risk"] = (
+            dict(risk) if matched else {
+                "ok": False, "scope": "metals",
+                "error": "Risk not matched to authoritative Metals position sample",
+            }
+        )
+        validated["live_metals_report"]["risk_status"] = (
+            "BROKER_POPULATION_MATCHED" if matched else
+            str(risk_section.get("status") or "UNVERIFIED")
+        )
     return validated
 
 
