@@ -1079,9 +1079,11 @@ function strategyHtml(key,s,notes){
  return '<div class="strategy"><div class="strategy-head"><div><div class="strategy-title">'+NAMES[key]+'</div><div class="lane">'+lane+
  '</div></div><div class="badges"><span class="badge">'+mode+'</span><span class="badge'+(key==='bco'&&(!pauseVerified||bcoPause.paused)?' amber':'')+'">'+entryBadge+'</span>'+(isMetals&&(num(b.pnl_gbp)===null||b.combined_high_water_status!=='OBSERVED_COMBINED_LIVE')?'<span class="badge amber">REPORTING INCOMPLETE</span>':stateBadge(s))+'</div></div><div class="grid cards">'+
  card(isMetals?'Broker P&L · LIVE XAU + XAG SHORT':'Open P&L','<span class="'+cls(b.pnl_gbp)+'">'+money(b.pnl_gbp)+'</span>',pnlNote)+
+ (isMetals?card('XAU basket R','<span class="'+cls(b.xau_only_pnl_r)+'">'+rr(b.xau_only_pnl_r)+'</span>','Gold only · live XAU basket · XAG Short excluded'):'')+
  card('Realised W / M',money(a.realised_week_gbp),'Month '+money(a.realised_month_gbp)+(isMetals?(a.xag_short_broker_net_verified?' · XAU + XAG SHORT net GBP verified':' · XAU-only; XAG ledger pending'):''))+
  card('All-time realised',money(a.realised_all_time_gbp),'Today '+money(a.realised_today_gbp)+(isMetals?(a.xag_short_broker_net_verified?' · XAU + XAG SHORT net GBP verified':' · XAU only'):''))+
  card(isMetals?'High water · LIVE XAU + XAG SHORT':'High water',money(b.high_water_gbp),peakNote)+
+ (isMetals?card('XAU high-water R','<span class="'+cls(b.xau_only_high_water_r)+'">'+rr(b.xau_only_high_water_r)+'</span>','Gold only · XAG Short excluded · peak '+when(b.xau_only_high_water_at_utc)):'')+
  card(isMetals?'Giveback · LIVE XAU + XAG SHORT':'Giveback',money(b.giveback_gbp),giveNote)+
  card('Open trades',intval(b.open_trades),countNote)+
  card('Approved risk / trade',money(d.risk_per_trade_gbp),riskPct+' of NAV'+(isMetals?' · XAU base; XAG pilot separate':''))+
