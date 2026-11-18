@@ -11,6 +11,7 @@ from typing import Any, Dict, Optional
 
 from financial_review import financial_review_line
 import hub_metals_live_positions_bridge as metals_live
+from hub_basket_activity_guard import position_observation, transition_events
 import hub_metals_combined_observed_hwm as metals_hwm
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
@@ -570,19 +571,16 @@ def _record_material_state(views: Dict[str, Dict[str, Any]]) -> None:
                 "stale": bool(view.get("stale")),
                 "ok": bool(view.get("ok")),
             }
+            # Position-feed failures are unknown, never zero trades.
+            # Require broker-verified Metals trade identities before making
+            # claims about physical basket openings or flattening.
+            observed_count, observed_verified = position_observation(key, view)
+            current["open_trades"] = observed_count
+            current["position_verified"] = observed_verified
             previous = _previous_material_state.get(key)
             if previous:
-                prev_open = int(previous.get("open_trades") or 0)
-                open_now = int(current["open_trades"])
-                if prev_open == 0 and open_now > 0:
-                    _append_activity("basket_opened", key, f"Basket opened - {open_now} trades", "good")
-                elif prev_open > 0 and open_now == 0:
-                    _append_activity("basket_flattened", key, "Basket flattened", "good")
-                elif open_now < prev_open:
-                    reduction = prev_open - open_now
-                    material_cut = reduction >= max(3, int(prev_open * 0.25))
-                    if material_cut:
-                        _append_activity("basket_reduced", key, f"Basket reduced {prev_open} -> {open_now} trades", "info")
+                for kind, message, tone in transition_events(key, previous, current):
+                    _append_activity(kind, key, message, tone)
 
                 prev_realised = safe_float(previous.get("realised_all_time_gbp"))
                 cur_realised = safe_float(current.get("realised_all_time_gbp"))
@@ -590,7 +588,18 @@ def _record_material_state(views: Dict[str, Dict[str, Any]]) -> None:
                     delta = cur_realised - prev_realised
                     if abs(delta) >= 0.01:
                         sign = "+" if delta > 0 else ""
-                        _append_activity("realised", key, f"Realised P&L changed {sign}GBP {delta:.2f}", "good" if delta > 0 else "bad")
+                        # A difference between reported realised snapshots
+                        # can be ledger backfill/re-attribution, not a trade.
+                        # Never describe this as a verified broker closure.
+                        _append_activity(
+                            "realised_report_revision" if key == "metals" else "realised",
+                            key,
+                            (f"Reported realised P&L revised {sign}GBP {delta:.2f}"
+                             " (snapshot comparison; not a confirmed trade closure)"
+                             if key == "metals" else
+                             f"Realised P&L changed {sign}GBP {delta:.2f}"),
+                            "info" if key == "metals" else ("good" if delta > 0 else "bad"),
+                        )
 
                 prev_hwm = safe_float(previous.get("high_water_gbp"))
                 cur_hwm = safe_float(current.get("high_water_gbp"))
