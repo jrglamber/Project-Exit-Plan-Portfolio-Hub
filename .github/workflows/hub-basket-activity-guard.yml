@@ -1,0 +1,27 @@
+name: Hub broker-verified basket activity event safety
+on:
+  pull_request:
+    paths:
+      - 'hub_basket_activity_guard.py'
+      - 'test_hub_basket_activity_guard.py'
+      - 'app.py'
+      - '.github/workflows/hub-basket-activity-guard.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'hub_basket_activity_guard.py'
+      - 'test_hub_basket_activity_guard.py'
+      - 'app.py'
+      - '.github/workflows/hub-basket-activity-guard.yml'
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python -m py_compile app.py hub_basket_activity_guard.py test_hub_basket_activity_guard.py
+      - run: python -m unittest -v test_hub_basket_activity_guard
