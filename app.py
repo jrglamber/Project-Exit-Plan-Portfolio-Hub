@@ -378,6 +378,21 @@ def fetch_source(key: str) -> Dict[str, Any]:
                         lane_payload.get("reporting_status") or "awaiting_reconciliation")
         except Exception:
             validated["accounting"]["lane_reporting_status"] = "producer_unavailable"
+        # A failed XAG audit cannot turn XAU-only realised money into the
+        # headline for the combined LIVE Metals strategy. Preserve a clearly
+        # scoped XAU baseline for research; combined portfolio realised cash
+        # remains unknown until a fresh verified XAG broker-cash proof exists.
+        accounting = validated.setdefault("accounting", {})
+        if not (accounting.get("xag_short_broker_net_verified") is True and
+                accounting.get("realised_scope") ==
+                "XAU_LEGACY_PLUS_XAG_SHORT_NET_BROKER_VERIFIED"):
+            for field in ("realised_today_gbp","realised_week_gbp",
+                          "realised_month_gbp","realised_all_time_gbp"):
+                accounting.setdefault("xau_only_"+field,accounting.get(field))
+                accounting[field]=None
+            accounting["realised_scope"]="COMBINED_METALS_CASH_UNVERIFIED"
+            accounting["lane_reporting_status"]=str(
+                accounting.get("lane_reporting_status") or "awaiting_reconciliation")
         # The original /api/portfolio-summary basket is XAU-only. The only
         # accepted Metals open P&L/count comes from the reconciled LIVE XAU +
         # LIVE XAG Short broker data, not the XAG practice basket.
@@ -762,14 +777,20 @@ def aggregate_snapshot() -> Dict[str, Any]:
         portfolio_warnings.append("live open P&L unavailable for one or more strategies")
 
     def sum_accounting(field: str) -> Optional[float]:
+        # Never label a partial sum as entire LIVE portfolio realised cash.
+        # Most importantly, a missing XAG audit must NOT silently substitute
+        # the XAU-only number nor the sum of the other strategies.
+        if len(live_rows) != len(LIVE_PORTFOLIO_STRATEGIES):
+            return None
         values = [safe_float((d.get("accounting") or {}).get(field)) for d in live_values]
-        values = [v for v in values if v is not None]
-        return sum(values) if values else None
+        return sum(values) if values and all(v is not None for v in values) else None
 
     realised_today = sum_accounting("realised_today_gbp")
     realised_week = sum_accounting("realised_week_gbp")
     realised_month = sum_accounting("realised_month_gbp")
     realised_all_time = sum_accounting("realised_all_time_gbp")
+    if any(v is None for v in (realised_week,realised_month,realised_all_time)):
+        portfolio_warnings.append("live realised P&L incomplete; at least one strategy not broker-verified")
     month_total = (
         realised_month + total_unrealised
         if realised_month is not None and total_unrealised is not None
