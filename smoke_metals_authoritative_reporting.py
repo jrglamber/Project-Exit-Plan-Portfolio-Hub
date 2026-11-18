@@ -26,6 +26,13 @@ def _read(base,path):
 def verify():
     producer=_read(METALS,"/api/live-metals-reporting-snapshot")
     hub=_read(HUB,"/api/aggregate")
+    # The browser renders these cards from the API, not static screenshots.
+    request=urllib.request.Request(HUB+"/",headers={
+        "Accept":"text/html","User-Agent":"PEP-Metals-R-Cards-ReadOnly-Canary/1.0"})
+    with urllib.request.urlopen(request,timeout=15) as response:
+        html=response.read(1200000).decode("utf-8","replace")
+    if "XAU basket R" not in html or "XAU high-water R" not in html:
+        raise AssertionError("Portfolio Hub is missing the XAU basket/high-water R cards")
     if producer.get("version")!=VERSION:
         raise AssertionError("Metals producer contract version mismatch")
     source=((hub.get("sources") or {}).get("metals") or {}).get("data") or {}
@@ -39,6 +46,13 @@ def verify():
     account=source.get("accounting") or {}
     basket=source.get("basket") or {}
     portfolio=hub.get("portfolio") or {}
+    # Combined XAU + XAG GBP and XAU-only R are independent scopes.
+    if basket.get("live_positions_status")=="BROKER_VERIFIED":
+        if ("xau_only_pnl_r" not in basket or
+                "xau_only_high_water_r" not in basket):
+            raise AssertionError("Original XAU-only R not preserved by the combined broker bridge")
+        if basket.get("pnl_r") is not None or basket.get("high_water_r") is not None:
+            raise AssertionError("XAU-only R incorrectly advertised as combined Metals R")
     if account.get("realised_scope")== "COMBINED_METALS_CASH_UNVERIFIED":
         for field in ("realised_week_gbp","realised_month_gbp","realised_all_time_gbp"):
             if account.get(field) is not None:
