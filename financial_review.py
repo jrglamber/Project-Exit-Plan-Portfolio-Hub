@@ -2,8 +2,10 @@ import json
 
 
 def _sum_present(values):
-    values = [v for v in values if v is not None]
-    return sum(values) if values else None
+    # The financial review is a whole-portfolio scorecard. Do not pass off a
+    # partial sum as a complete one when one live strategy is unverified.
+    values=list(values)
+    return sum(values) if values and all(v is not None for v in values) else None
 
 
 def financial_review_payload(snapshot):
@@ -61,6 +63,10 @@ def financial_review_payload(snapshot):
         if k in out['strategies'] and str(out['strategies'][k].get('mode') or '').lower() == 'live'
     )
     out['live_scope'] = list(live)
+    complete_live_scope = len(live) == len(configured_scope)
+    def complete_sum(field):
+        return (_sum_present([out['strategies'][k][field] for k in live])
+                if complete_live_scope else None)
     out['overall_balance_gbp'] = portfolio.get('nav_gbp')
     out['portfolio_nav_high_water_gbp'] = portfolio.get('nav_high_water_gbp')
     out['portfolio_drawdown_gbp'] = portfolio.get('drawdown_gbp')
@@ -69,11 +75,11 @@ def financial_review_payload(snapshot):
     out['balance_source_spread_gbp'] = portfolio.get('nav_spread_gbp')
     out['balance_source_disagreement'] = portfolio.get('nav_disagreement')
     out['combined_live_realised_today_gbp'] = portfolio.get('realised_today_gbp')
-    out['combined_live_realised_week_gbp'] = _sum_present([out['strategies'][k]['realised_week_gbp'] for k in live])
-    out['combined_live_realised_month_gbp'] = _sum_present([out['strategies'][k]['realised_month_gbp'] for k in live])
+    out['combined_live_realised_week_gbp'] = complete_sum('realised_week_gbp')
+    out['combined_live_realised_month_gbp'] = complete_sum('realised_month_gbp')
     out['combined_live_month_total_gbp'] = portfolio.get('month_total_gbp')
-    out['combined_live_realised_all_time_gbp'] = _sum_present([out['strategies'][k]['realised_all_time_gbp'] for k in live])
-    out['combined_live_unrealised_gbp'] = _sum_present([out['strategies'][k]['unrealised_gbp'] for k in live])
+    out['combined_live_realised_all_time_gbp'] = complete_sum('realised_all_time_gbp')
+    out['combined_live_unrealised_gbp'] = complete_sum('unrealised_gbp')
     return out
 
 
