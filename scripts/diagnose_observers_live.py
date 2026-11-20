@@ -38,7 +38,10 @@ def main():
             if name == "hub":
                 doc = (doc.get("sources") or {})
                 print("hub_alerts:", json.dumps({
-                    key: {"state": item.get("state"), "alerts": item.get("alerts")}
+                    key: {"state": item.get("state"), "alerts": item.get("alerts"),
+                          "primary_cause": item.get("primary_cause"),
+                          "paused_quota_count": item.get("paused_quota_count"),
+                          "active_429_count": item.get("active_429_count")}
                     for key, item in doc.items()
                 }, default=str))
                 continue
