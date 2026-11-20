@@ -4,6 +4,7 @@ on:
     paths:
       - app.py
       - ai_observer_watchdog.py
+      - test_ai_observer_watchdog.py
       - .github/workflows/ai-observer-watchdog-check.yml
   workflow_dispatch:
 jobs:
@@ -14,4 +15,5 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - run: python -m py_compile app.py ai_observer_watchdog.py
+      - run: python -m py_compile app.py ai_observer_watchdog.py test_ai_observer_watchdog.py
+      - run: python -m unittest -v test_ai_observer_watchdog.py
