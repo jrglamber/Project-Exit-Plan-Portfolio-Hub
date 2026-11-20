@@ -43,6 +43,8 @@ def main():
                 }, default=str))
                 continue
             audit = doc.get("audit") or doc
+            print(name + "_status_keys", sorted(doc.keys()))
+            print(name + "_audit_keys", sorted(audit.keys()) if isinstance(audit, dict) else [])
             keys = (
                 "ai_enabled", "api_key_configured", "capture_enabled",
                 "worker_started", "thread_alive", "queue_size",
