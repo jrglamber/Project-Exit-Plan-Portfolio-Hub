@@ -55,6 +55,7 @@ def main():
                 "ok", "alerts", "captured_rows", "capture_age_hours", "latest_complete_age_hours",
                 "latest_eligible_age_hours", "error_count_recent_100", "active_ai_error_count",
                 "overdue_eligible_count", "overdue_eligible", "recent_errors",
+                "pipeline_diagnostics", "historical_error_rows_last_100", "active_error_codes",
             )
             summary = {key: audit.get(key) for key in whitelist if key in audit}
             errs = audit.get("active_ai_errors") or []
