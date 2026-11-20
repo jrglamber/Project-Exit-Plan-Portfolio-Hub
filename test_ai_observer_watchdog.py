@@ -15,6 +15,7 @@ class Response(io.BytesIO):
 
 class WatchdogTests(unittest.TestCase):
     def run_case(self, payload):
+        payload.setdefault("capture_age_hours", 0.5)
         with patch.object(w.urllib.request, "urlopen", return_value=Response(json.dumps(payload).encode())):
             return w.check_sources({"indices": {"url": "https://example.com"}}, timeout=1)["indices"]
 
