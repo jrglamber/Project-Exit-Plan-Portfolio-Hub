@@ -1,0 +1,23 @@
+name: Observer live diagnostic - read only
+on:
+  push:
+    paths:
+      - scripts/diagnose_observers_live.py
+      - .github/workflows/observer-live-diagnostic.yml
+  pull_request:
+    paths:
+      - scripts/diagnose_observers_live.py
+      - .github/workflows/observer-live-diagnostic.yml
+  workflow_dispatch:
+jobs:
+  observer-status:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Compile public observer diagnostic
+        run: python -m py_compile scripts/diagnose_observers_live.py
+      - name: Read observer live status and limited recent errors
+        run: python scripts/diagnose_observers_live.py
