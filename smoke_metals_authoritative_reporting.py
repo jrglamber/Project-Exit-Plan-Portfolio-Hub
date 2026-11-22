@@ -61,6 +61,12 @@ def verify():
                 raise AssertionError("Unverified XAU cash shown in period table")
             if not sv and g is not None:
                 raise AssertionError("Unverified XAG cash shown in period table")
+    print("METALS_PERIOD_CASH_STATUS",json.dumps({
+        "xau_verified_since_epoch": xv,
+        "xag_broker_verified": sv,
+        "current_week_combined_present": periods["weekly"][0].get("combined_gbp") is not None,
+        "current_month_combined_present": periods["monthly"][0].get("combined_gbp") is not None,
+    }))
     # Server must include the panel itself, not only expose a JSON endpoint.
     request=urllib.request.Request(METALS+"/dashboard",headers={
         "Accept":"text/html","User-Agent":"PEP-Metals-Period-UI-ReadOnly-Canary/1.0"})
