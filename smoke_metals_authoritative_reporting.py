@@ -31,8 +31,8 @@ def verify():
         "Accept":"text/html","User-Agent":"PEP-Metals-R-Cards-ReadOnly-Canary/1.0"})
     with urllib.request.urlopen(request,timeout=15) as response:
         html=response.read(1200000).decode("utf-8","replace")
-    if "XAU basket R" not in html or "XAU high-water R" not in html:
-        raise AssertionError("Portfolio Hub is missing the XAU basket/high-water R cards")
+    if "Open basket · R / P&L" not in html or "XAU high-water R" not in html:
+        raise AssertionError("Portfolio Hub is missing the combined basket R/P&L or XAU high-water R cards")
     if producer.get("version")!=VERSION:
         raise AssertionError("Metals producer contract version mismatch")
     source=((hub.get("sources") or {}).get("metals") or {}).get("data") or {}
