@@ -383,7 +383,24 @@ def fetch_source(key: str) -> Dict[str, Any]:
             "generated_at_utc": report.get("generated_at_utc"),
             "error": report.get("error"),
         }
+        # Preserve broker-account XAU proof without relabelling it as strategy P&L.
+        xau_account_cash = report.get("xau_account_cash") or {}
         accounting = validated.setdefault("accounting", {})
+        if (xau_account_cash.get("ok") is True
+                and xau_account_cash.get("scope") == "OANDA_ACCOUNT_ALL_XAU_NOT_STRATEGY_OWNERSHIP"
+                and xau_account_cash.get("status") == "BROKER_ACCOUNT_VERIFIED_NOT_STRATEGY_ATTRIBUTED"):
+            accounting["xau_broker_account_cash"] = {
+                "status": "BROKER_ACCOUNT_VERIFIED_NOT_STRATEGY_ATTRIBUTED",
+                "scope": xau_account_cash["scope"],
+                "directions": xau_account_cash.get("directions"),
+                "trade_counts": xau_account_cash.get("trade_counts"),
+                "account_currency": xau_account_cash.get("account_currency"),
+            }
+        else:
+            accounting["xau_broker_account_cash"] = {
+                "status": "UNVERIFIED", "directions": None,
+            }
+
         cash = report.get("cash") or {}
         if cash.get("ok") is True and isinstance(cash.get("proof"), dict):
             try:
