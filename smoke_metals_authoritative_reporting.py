@@ -33,6 +33,41 @@ def verify():
         html=response.read(1200000).decode("utf-8","replace")
     if "Open basket · R / P&L" not in html or "XAU high-water R" not in html:
         raise AssertionError("Portfolio Hub is missing the combined basket R/P&L or XAU high-water R cards")
+    # A separate, read-only source must now power the Metals weekly/monthly
+    # accounting dashboard. Confirm its data is honest, not merely present.
+    periods=_read(METALS,"/api/live-metals-period-accounting")
+    if (periods.get("version")!="live_metals_period_accounting_v1_20261122"
+            or periods.get("scope")!="LIVE_XAU_LONG_SHORT_PLUS_LIVE_XAG_SHORT"
+            or periods.get("read_only") is not True
+            or periods.get("execution_authority") is not False):
+        raise AssertionError("Metals period accounting contract missing or unsafe")
+    xv=(periods.get("xau") or {}).get("verified_since_epoch") is True
+    sv=(periods.get("xag") or {}).get("broker_cash_verified") is True
+    if periods.get("ok") is not (xv and sv):
+        raise AssertionError("Metals period accounting verification status inconsistent")
+    for name in ("weekly","monthly"):
+        arr=periods.get(name)
+        if not isinstance(arr,list) or not arr:
+            raise AssertionError("Metals period accounting "+name+" rows missing")
+        for row in arr:
+            x=row.get("xau_gbp")
+            g=row.get("xag_gbp")
+            c=row.get("combined_gbp")
+            if c is not None:
+                if (x is None or g is None or not (xv and sv)
+                        or abs((float(x)+float(g))-float(c))>0.021):
+                    raise AssertionError("Metals period accounting falsely combines cash")
+            if not xv and x is not None:
+                raise AssertionError("Unverified XAU cash shown in period table")
+            if not sv and g is not None:
+                raise AssertionError("Unverified XAG cash shown in period table")
+    # Server must include the panel itself, not only expose a JSON endpoint.
+    request=urllib.request.Request(METALS+"/dashboard",headers={
+        "Accept":"text/html","User-Agent":"PEP-Metals-Period-UI-ReadOnly-Canary/1.0"})
+    with urllib.request.urlopen(request,timeout=15) as response:
+        period_html=response.read(1500000).decode("utf-8","replace")
+    if "pep-metals-period-accounting" not in period_html:
+        raise AssertionError("Metals dashboard is missing weekly/monthly accounting panel")
     if producer.get("version")!=VERSION:
         raise AssertionError("Metals producer contract version mismatch")
     source=((hub.get("sources") or {}).get("metals") or {}).get("data") or {}
