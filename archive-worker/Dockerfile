@@ -7,6 +7,8 @@ COPY retention_plan.py /opt/archive/retention_plan.py
 COPY incremental.py /opt/archive/incremental.py
 COPY inventory.py /opt/archive/inventory.py
 COPY table_archive.py /opt/archive/table_archive.py
+COPY table_restore.py /opt/archive/table_restore.py
+COPY restore_jobs.py /opt/archive/restore_jobs.py
 USER postgres
 ENTRYPOINT []
 CMD ["python3", "-u", "/opt/archive/archive.py"]
