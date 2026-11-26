@@ -69,7 +69,7 @@ def dump_counts(path):
     # Count source rows from the dump's COPY streams without materializing the
     # uncompressed SQL on disk or holding the entire dump in memory.
     with tempfile.TemporaryFile() as err:
-        proc = subprocess.Popen(["pg_restore", "--data-only", str(path)], stdout=subprocess.PIPE, stderr=err)
+        proc = subprocess.Popen(["pg_restore", "--data-only", "--file=-", str(path)], stdout=subprocess.PIPE, stderr=err)
         try:
             result = parse_copy_counts(proc.stdout)
             if proc.wait(timeout=1800) != 0:
