@@ -36,3 +36,29 @@ that reconstructed SQL into a disposable socket-only cluster and matches all
 source COPY row counts. Future manifests reference shared chunks, not delta
 chains. v1 remains authoritative for original metadata. No objects or database
 rows are deleted; no savings are assumed until cross-day reuse is measured.
+
+### XAU manager-review telemetry archive and guarded cleanup
+
+The Metals DB Housekeeping job copies bounded ID intervals from
+`public.metals_xau_live_manager_reviews` to private, checksummed CSV/gzip
+objects. A separate worker with no production database credentials restores
+each archived page to a temporary PostgreSQL cluster and compares the
+round-trip CSV byte-for-byte. It publishes an independent restore proof.
+
+`housekeeping_jobs.py` always copies first. When
+`XAU_VERIFIED_CLEANUP_ENABLED=1` is explicitly set on that service only, it
+may remove at most one complete 5,000-ID page per run after downloading and
+revalidating its archived object and matching its independent restore proof.
+Within a bounded database transaction it locks the targeted rows and linked
+closed trade records, verifies the exact existing CSV, preserves the original
+one-million-ID hot window and rejects missing/open/unreconciled links,
+schema drift, cascades, triggers, rules and conflicts. It deletes only the
+exact locked review IDs and confirms their absence before commit. All other
+tables, broker transactions, trading logic and archive objects are untouched.
+
+An intent record is retained before any write, and the completion receipt is
+published and read back after commit. An interrupted or failed receipt write
+must be investigated using the intent and database state; it is not evidence
+of a committed deletion. A skipped page is not a failed trading operation.
+Turning the flag off restores copy-only operation. Routine PostgreSQL vacuum
+can reuse deleted space; this is not a physical volume compaction procedure.
