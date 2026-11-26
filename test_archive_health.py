@@ -2,7 +2,7 @@ import io
 import json
 import unittest
 from datetime import datetime, timezone, timedelta
-from archive_health import PREFIX, build_status
+from archive_health import PREFIX, build_status, install_archive_health_route
 
 
 class Missing(Exception):
@@ -67,6 +67,47 @@ class ArchiveHealthTests(unittest.TestCase):
         self.assertEqual(result["status"], "REVIEW")
         self.assertFalse(result["assets"]["indices"]["backup_ok"])
 
+
+class ArchiveHealthRouteTests(unittest.TestCase):
+    def test_route_precedes_catchall_mount_and_preserves_other_routes(self):
+        from fastapi import FastAPI
+        import asyncio
+        from unittest.mock import patch
+        outer, inner = FastAPI(), FastAPI()
+
+        @inner.get("/api/other")
+        def other():
+            return {"existing": True}
+
+        outer.mount("/", inner)
+        def get(path):
+            # Exercise the actual ASGI router without an extra test dependency.
+            messages = []
+            async def receive():
+                return {"type": "http.request", "body": b"", "more_body": False}
+            async def send(message):
+                messages.append(message)
+            scope = {"type": "http", "asgi": {"version": "3.0", "spec_version": "2.3"},
+                     "http_version": "1.1", "method": "GET", "scheme": "http",
+                     "path": path, "raw_path": path.encode(), "root_path": "",
+                     "query_string": b"", "headers": [],
+                     "client": ("127.0.0.1", 1234), "server": ("test", 80)}
+            asyncio.run(outer(scope, receive, send))
+            status = next(m["status"] for m in messages if m["type"] == "http.response.start")
+            body = b"".join(m["body"] for m in messages if m["type"] == "http.response.body")
+            return status, json.loads(body)
+        self.assertEqual(get("/api/archive-health")[0], 404)
+        def health():
+            return {"status": "HEALTHY", "execution_authority": False}
+        with patch("archive_health.archive_health", health):
+            old_order = list(outer.routes)
+            route = install_archive_health_route(outer)
+            self.assertIs(outer.routes[0], route)
+            self.assertEqual(outer.routes[1:], old_order)
+            self.assertEqual(get("/api/archive-health"), (200, health()))
+            self.assertEqual(get("/api/other"), (200, {"existing": True}))
+            self.assertIs(install_archive_health_route(outer), route)
+            self.assertEqual(outer.routes[1:], old_order)
 
 if __name__ == "__main__":
     unittest.main()
