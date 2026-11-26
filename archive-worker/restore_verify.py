@@ -94,7 +94,7 @@ def restored_counts(expected, env):
     return result
 
 
-def restore_and_count(path, expected, root):
+def restore_and_count(path, expected, root, restore_sql=None):
     data = root / "pgdata"
     socket_dir = root / "socket"
     socket_dir.mkdir()
@@ -114,8 +114,11 @@ def restore_and_count(path, expected, root):
                  "-o", options, "-w", "start"], env, timeout=120)
         started = True
         command(["createdb", "restored"], env, timeout=120)
-        command(["pg_restore", "--exit-on-error", "--no-owner", "--no-privileges", "--no-tablespaces",
-                 "--dbname", "restored", str(path)], env)
+        if restore_sql is None:
+            command(["pg_restore", "--exit-on-error", "--no-owner", "--no-privileges", "--no-tablespaces",
+                     "--dbname", "restored", str(path)], env)
+        else:
+            restore_sql(env)
         return restored_counts(expected, env)
     finally:
         if started:

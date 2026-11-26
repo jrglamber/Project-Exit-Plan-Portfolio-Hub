@@ -4,6 +4,7 @@ WORKDIR /opt/archive
 COPY archive.py /opt/archive/archive.py
 COPY restore_verify.py /opt/archive/restore_verify.py
 COPY retention_plan.py /opt/archive/retention_plan.py
+COPY incremental.py /opt/archive/incremental.py
 USER postgres
 ENTRYPOINT []
 CMD ["python3", "-u", "/opt/archive/archive.py"]

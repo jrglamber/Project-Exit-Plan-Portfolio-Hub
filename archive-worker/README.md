@@ -24,3 +24,15 @@ and restore to a separate PostgreSQL 18 test instance using `pg_restore`.
 Never restore directly over a live trading database. The current verification
 proves decoding and storage integrity, not a full restore or row-level replay.
 A separately validated restore and retention plan must precede any pruning.
+
+### Content-addressed recovery archive (v2)
+
+The separate incremental worker reads the verified v1 full dumps only. It
+decodes portable PostgreSQL SQL (owner, ACL, and tablespace assignments omitted),
+chunks it at content-defined boundaries, and stores gzip objects by their raw
+SHA-256. Every reused or uploaded chunk is read back, and the ordered SQL stream
+is independently reconstructed and hashed. The initial recovery test restores
+that reconstructed SQL into a disposable socket-only cluster and matches all
+source COPY row counts. Future manifests reference shared chunks, not delta
+chains. v1 remains authoritative for original metadata. No objects or database
+rows are deleted; no savings are assumed until cross-day reuse is measured.
