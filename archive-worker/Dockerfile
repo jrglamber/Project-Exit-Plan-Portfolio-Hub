@@ -11,6 +11,8 @@ COPY table_restore.py /opt/archive/table_restore.py
 COPY restore_jobs.py /opt/archive/restore_jobs.py
 COPY retention_audit.py /opt/archive/retention_audit.py
 COPY inventory_jobs.py /opt/archive/inventory_jobs.py
+COPY cleanup_audit.py /opt/archive/cleanup_audit.py
+COPY bucket_inventory.py /opt/archive/bucket_inventory.py
 COPY table_cleanup.py /opt/archive/table_cleanup.py
 COPY table_cleanup_selftest.py /opt/archive/table_cleanup_selftest.py
 COPY housekeeping_jobs.py /opt/archive/housekeeping_jobs.py

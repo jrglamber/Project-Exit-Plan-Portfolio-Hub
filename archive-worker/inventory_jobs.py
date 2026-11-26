@@ -1,10 +1,12 @@
 """Daily storage metadata and read-only review-retention eligibility audit."""
 import inventory
 import retention_audit
+import cleanup_audit
+import bucket_inventory
 
 def main():
     failures=[]
-    for name,func in (("inventory",inventory.main),("retention_audit",retention_audit.main)):
+    for name,func in (("inventory",inventory.main),("retention_audit",retention_audit.main),("cleanup_audit",cleanup_audit.main),("bucket_inventory",bucket_inventory.main)):
         try:
             if func():
                 failures.append(name)

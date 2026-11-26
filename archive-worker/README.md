@@ -62,3 +62,15 @@ must be investigated using the intent and database state; it is not evidence
 of a committed deletion. A skipped page is not a failed trading operation.
 Turning the flag off restores copy-only operation. Routine PostgreSQL vacuum
 can reuse deleted space; this is not a physical volume compaction procedure.
+
+The daily Archive Inventory job additionally audits XAU cleanup intent and
+outcome receipts independently of the writer. It re-downloads the archived
+page, checks it against the original isolated restore proof, confirms the
+committed ID interval has no remaining source rows via a read-only indexed
+query, and records the result without modifying the receipt. Incomplete
+intents are checked separately; a recent in-flight intent or unchanged source
+is not a deletion, while an unexplained absence or partial page warrants
+review. Audit progress catches up missed days in bounded seven-day batches.
+The same job lists the private archive prefix and totals actual object bytes
+by archive category (bounded to 250,000 objects, with incomplete totals
+explicitly marked partial). No payloads are downloaded for bucket inventory.
