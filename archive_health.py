@@ -105,3 +105,28 @@ def archive_health():
         return _cache
     finally:
         _lock.release()
+
+
+def install_archive_health_route(app):
+    """Put the exact read-only route before the Hub's catch-all mount.
+
+    Starlette matches routes in order. Appending this route to the final
+    exported app is insufficient when an earlier mount consumes /api/*.
+    Keep registration idempotent and preserve all other route ordering.
+    """
+    path = "/api/archive-health"
+    def matches(route):
+        return (getattr(route, "path", None) == path
+                and "GET" in (getattr(route, "methods", None) or set()))
+    existing = [route for route in app.routes if matches(route)]
+    if len(existing) > 1:
+        raise RuntimeError("Duplicate archive health routes")
+    if not existing:
+        app.add_api_route(path, archive_health, methods=["GET"], name="archive_health")
+        existing = [route for route in app.routes if matches(route)]
+    if len(existing) != 1 or getattr(existing[0], "endpoint", None) is not archive_health:
+        raise RuntimeError("Archive health endpoint registration mismatch")
+    route = existing[0]
+    app.routes.remove(route)
+    app.routes.insert(0, route)
+    return route

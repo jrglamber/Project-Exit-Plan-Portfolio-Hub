@@ -55,8 +55,8 @@ print(
 )
 
 # This route reads only archive metadata and remains independent of trading data.
-from archive_health import archive_health
-app.add_api_route('/api/archive-health', archive_health, methods=['GET'], name='archive_health')
+from archive_health import archive_health, install_archive_health_route
+install_archive_health_route(app)
 
 # Nonblocking startup proof, isolated from live telemetry and financial status.
 @app.on_event("startup")
@@ -65,7 +65,8 @@ def _archive_health_startup():
     def verify_archive():
         state = archive_health()
         print("HUB_ARCHIVE_HEALTH status=" + str(state.get("status")) +
-              " assets=" + ",".join(sorted((state.get("assets") or {}).keys())),
+              " assets=" + ",".join(sorted((state.get("assets") or {}).keys())) +
+              " route_index=0",
               flush=True)
     threading.Thread(target=verify_archive, daemon=True, name="archive-health").start()
 
