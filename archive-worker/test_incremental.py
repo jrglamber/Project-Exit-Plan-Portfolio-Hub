@@ -1,6 +1,7 @@
 import io
 import unittest
-from incremental import chunks, digest, encode_stream, reconstruct, chunk_key, manifest_read, manifest_write
+from unittest.mock import patch
+from incremental import chunks, digest, encode_stream, reconstruct, chunk_key, manifest_read, manifest_write, archive_incremental
 
 
 class Missing(Exception):
@@ -53,6 +54,12 @@ class IncrementalTests(unittest.TestCase):
             reconstruct(s3, "bucket", first)
         with self.assertRaises(Exception):
             encode_stream(s3, "bucket", io.BytesIO(b"abc\n"))
+
+    def test_scheduled_run_rejects_stale_source(self):
+        with patch.dict("os.environ", {"INCREMENTAL_REQUIRE_TODAY": "1"}), \
+             patch("incremental.latest_manifest", return_value=("project-exit-plan/v1/metals/2000/01/01/verified.json", {})):
+            with self.assertRaisesRegex(RuntimeError, "today's verified"):
+                archive_incremental(Bucket(), "bucket", "metals")
 
     def test_insert_resynchronizes_boundaries(self):
         rows = [f"record-{i:06d}\n".encode() for i in range(20000)]

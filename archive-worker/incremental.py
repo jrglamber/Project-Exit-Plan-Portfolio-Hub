@@ -157,6 +157,9 @@ def encode_stream(s3, bucket, stream):
             new_bytes += entry["stored_bytes"]
         else:
             reused_bytes += entry["stored_bytes"]
+        if len(entries) % 50 == 0:
+            print(f"INCREMENTAL_CHUNKS_PROGRESS chunks={len(entries)} "
+                  f"new_bytes={new_bytes} reused_bytes={reused_bytes}", flush=True)
     if not entries:
         raise RuntimeError("empty SQL stream")
     return {"chunks": entries, "sql_bytes": raw_size, "sql_sha256": h.hexdigest(),
@@ -191,6 +194,12 @@ def verify_sql_restore(s3, bucket, manifest, path, root, table_entries):
 
 def archive_incremental(s3, bucket, asset):
     source_key, source = latest_manifest(s3, bucket, asset)
+    # Scheduled jobs must process today's verified full snapshot, not silently
+    # re-verify yesterday after a failed backup. First manual trial may use an
+    # explicitly retained previous snapshot.
+    if os.getenv("INCREMENTAL_REQUIRE_TODAY", "0") == "1":
+        if source_key.rsplit("/", 1)[0].split("/")[-3:] != datetime.now(timezone.utc).strftime("%Y/%m/%d").split("/"):
+            raise RuntimeError("today's verified full snapshot is missing")
     if not HEX.fullmatch(source.get("sha256", "")):
         raise RuntimeError("source SHA missing")
     day = source_key.rsplit("/", 1)[0].split("/")[-3:]
@@ -232,6 +241,7 @@ def archive_incremental(s3, bucket, asset):
         # Test initial recovery using only reconstructed bucket SQL and a disposable
         # socket-only database. Future runs still verify every chunk and overall SHA.
         if os.getenv("INCREMENTAL_RESTORE_TEST", "1") == "1":
+            print(f"INCREMENTAL_RESTORE_STARTED asset={asset} chunks={len(result['chunks'])}", flush=True)
             manifest.update(verify_sql_restore(s3, bucket, manifest, path, Path(d),
                                                source["table_data_entries"]))
             print(f"INCREMENTAL_RESTORE_VERIFIED asset={asset} tables={manifest['tables_checked']} "
